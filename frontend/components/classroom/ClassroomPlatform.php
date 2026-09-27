@@ -22,6 +22,13 @@ interface ClassroomPlatform
      */
     public function registerCourseUsers($courseId);
 
+    /**
+     * ساخت (یا به‌روزرسانی) کلاس‌های آنلاین دوره؛ برای درس جدید، شناسه‌ی درس داده می‌شود.
+     *
+     * @return bool|null true موفق، false پاسخ ناموفق، null خطای ارتباط
+     */
+    public function createCourseMeetings($courseId, $newLessonId = null);
+
     /** حذف دسترسی کاربر از کلاس‌های دوره */
     public function removeCourseUser($user, $courseId);
 

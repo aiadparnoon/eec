@@ -111,6 +111,57 @@ class PackagesController extends Controller
      * Lists all Courses models.
      * @return mixed
      */
+    /**
+     * امنیتی: بسیاری از اکشن‌های این کنترلر (اعضا، تخفیف، کلاس آنلاین، نمره، ...) که صفحه‌ی ویرایش
+     * دوره‌های کوتاه‌مدت و میان‌مدت از آن‌ها استفاده می‌کند، بررسی نمی‌کردند که دوره متعلق به محدوده‌ی
+     * کاربر هست یا نه (IDOR). تا بازطراحی این بخش، اینجا دوره‌ی هدفِ هر درخواست پیدا و با
+     * CourseAccess بررسی می‌شود. تخفیف شهریه فقط توسط مدیر (بند ۵.۲ صورتجلسه).
+     */
+    public function beforeAction($action)
+    {
+        if (!parent::beforeAction($action))
+            return false;
+        if (Yii::$app->user->isGuest)
+            return true;
+        if (in_array($action->id, ['add_discount', 'delete_discount'], true) && !\app\components\CourseAccess::canSetDiscount()) {
+            Yii::$app->session->setFlash('status', '2');
+            $this->redirect(\app\components\SafeRedirect::referrer(['index']))->send();
+            return false;
+        }
+        $request = Yii::$app->request;
+        $post = $request->post();
+        $candidates = [
+            $request->post('courseId'), $request->post('packageId'), $request->post('course_id'),
+            isset($post['Courses']['_id']) ? $post['Courses']['_id'] : null,
+            isset($post['Discounts']['course_id']) ? $post['Discounts']['course_id'] : null,
+            isset($post['CoursesFinancial']['course_id']) ? $post['CoursesFinancial']['course_id'] : null,
+            isset($post['Users']['courses']) ? $post['Users']['courses'] : null,
+        ];
+        if (isset($post['Discounts']['_id']) && is_string($post['Discounts']['_id']) && preg_match('/^[a-f0-9]{24}$/i', $post['Discounts']['_id'])) {
+            $discount = \app\models\Discounts::findOne($post['Discounts']['_id']);
+            if ($discount !== null)
+                $candidates[] = $discount->course_id;
+        }
+        if (in_array($action->id, ['members_report', 'recording-grades', 'edit-package', 'copy-package'], true))
+            $candidates[] = $request->get('_id');
+        foreach ($candidates as $id) {
+            if ($id === null || $id === '')
+                continue;
+            $course = is_string($id) && preg_match('/^[a-f0-9]{24}$/i', $id) ? Courses::findOne($id) : null;
+            // ثبت نمره توسط استادِ همان دوره هم مجاز است
+            $viewOnly = $request->isGet || in_array($action->id, ['register_grades', 'register_course_scores'], true);
+            $allowed = $course !== null && ($viewOnly ? \app\components\CourseAccess::canView($course) : \app\components\CourseAccess::canManage($course));
+            if (!$allowed) {
+                if ($request->isAjax)
+                    throw new \yii\web\ForbiddenHttpException('دسترسی به این دوره مجاز نیست');
+                Yii::$app->session->setFlash('status', '2');
+                $this->redirect(\app\components\SafeRedirect::referrer(['index']))->send();
+                return false;
+            }
+        }
+        return true;
+    }
+
     public function actionIndex()
     {
         $searchModel = new CoursesSearch();

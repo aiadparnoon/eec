@@ -1,7 +1,9 @@
 <?php
-$this->title = 'مدیریت دوره های تک درس';
+$this->title = 'ویرایش دوره‌ی کوتاه‌مدت';
 
 use frontend\controllers\DashboardController;
+use app\components\CourseAccess;
+use app\components\CourseStatus;
 use yii\helpers\ArrayHelper;
 use yii\helpers\Html;
 use yii\helpers\Url;
@@ -30,6 +32,12 @@ $capacityType = array(
     '2' => 'محدود',
     '3' => 'سازمانی'
 );
+
+$flash = Yii::$app->session->getFlash(\frontend\controllers\CoursesController::FLASH);
+if (is_array($flash) && isset($flash['message'])) {
+    $flashType = in_array($flash['type'], ['success', 'error', 'warning', 'info'], true) ? $flash['type'] : 'info';
+    $this->registerJs("toastr['$flashType'](" . \yii\helpers\Json::htmlEncode($flash['message']) . ", '', {positionClass: 'toast-top-center', closeButton: true, timeOut: 7000, escapeHtml: true});");
+}
 
 if (Yii::$app->session->has('status')) {
     if (Yii::$app->session->get('status') == '1')
@@ -1007,20 +1015,25 @@ $this->registerJs($digit);
                     <a href="javascript:void(0);">مدیریت دوره</a>
                 </li>
                 <li class="breadcrumb-item">
-                    <a href="javascript:void(0);">دوره های تک درس</a>
+                    <a href="<?= Url::to(['index']) ?>">دوره‌های کوتاه‌مدت</a>
                 </li>
                 <li class="breadcrumb-item active">ویرایش دوره (<?= Html::encode($courseDetail->title['main_fa']) ?>)</li>
             </ol>
             <span class="badge bg-label-dark h2">
-                <?php
-                if(Yii::$app->user->identity->role == 'user')
-                    echo '<a class="h6" href="'.Yii::$app->urlManager->createAbsoluteUrl(['courses','CoursesSearch[college]' => $courseDetail->college ,'CoursesSearch[title][main_fa]' => '','CoursesSearch[license_code]' => '','CoursesSearch[status]' => '']).'">بازگشت</a>';
-                else
-                    echo '<a class="h6" href="'.Yii::$app->urlManager->createAbsoluteUrl('courses').'">بازگشت</a>';
-                ?>
+                <a class="h6" href="<?= Url::to(['index']) ?>">بازگشت</a>
             </span>
         </div>
     </nav>
+    <div class="card mb-3">
+        <div class="card-body">
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+                <h6 class="mb-0"><i class="bx bx-git-commit me-1"></i>فرآیند بررسی و تأیید دوره</h6>
+                <?php list($statusText, $statusColor) = CourseStatus::label($courseDetail); ?>
+                <span class="badge bg-label-<?= Html::encode($statusColor) ?>">وضعیت فعلی: <?= Html::encode($statusText) ?></span>
+            </div>
+            <?= $this->render('_stepper', ['course' => $courseDetail]) ?>
+        </div>
+    </div>
     <div class="card text-center mb-3">
         <div class="card-header d-flex align-items-center justify-content-between">
             <ul class="nav nav-pills" role="tablist">
@@ -1180,7 +1193,7 @@ $this->registerJs($digit);
                             ?>
                         </div>
                         <div class="col-3 col-md-3 col-sm-12 dol-lg-3 col-xl-3 mb-3">
-                            <label for="nameWithTitle" class="form-label">عنوان فارسی (داخل مدرک) *</label>
+                            <label for="nameWithTitle" class="form-label">عنوان فارسی (داخل گواهی) *</label>
                             <?php
                             if($allowEdit)
                                 echo $form->field($courseDetail, 'title[degree_fa]')->textInput(
@@ -1196,7 +1209,7 @@ $this->registerJs($digit);
                             ?>
                         </div>
                         <div class="col-3 col-md-3 col-sm-12 dol-lg-3 col-xl-3 mb-3">
-                            <label for="nameWithTitle" class="form-label">عنوان انگلیسی (داخل مدرک) </label>
+                            <label for="nameWithTitle" class="form-label">عنوان انگلیسی (داخل گواهی) </label>
                             <?php
                             if($allowEdit)
                                 echo $form->field($courseDetail, 'title[degree_en]')->textInput(
@@ -1233,7 +1246,7 @@ $this->registerJs($digit);
                         <div class="col-3 col-md-3 col-sm-12 dol-lg-3 col-xl-3 mb-3">
                             <label for="nameWithTitle" class="form-label">قیمت با تخفیف (تومان) *</label>
                             <?php
-                            if($allowEdit)
+                            if($allowEdit && CourseAccess::canSetDiscount())
                                 echo $form->field($courseDetail, 'discount_price')->textInput(
                                     [
                                         'class' => 'form-control text-start only-english-digits',
@@ -1289,7 +1302,7 @@ $this->registerJs($digit);
                                     ]
                                 )->label(false);
                             else
-                                echo '<input type="text" class="form-control text-start" disabled readonly value="'.$courseDetailType[$courseDetail->content_type].'">';
+                                echo '<input type="text" class="form-control text-start" disabled readonly value="'.Html::encode($courseDetailType[$courseDetail->content_type] ?? '').'">';
                             ?>
                         </div>
                         <div class="col-2 col-md-2 col-sm-12 dol-lg-2 col-xl-2 mb-3">
@@ -1321,7 +1334,7 @@ $this->registerJs($digit);
                                     ]
                                 )->label(false);
                             else
-                                echo '<input type="text" class="form-control text-start" disabled readonly value="'.$capacityType[$courseDetail->student_capacity['type']].'">';
+                                echo '<input type="text" class="form-control text-start" disabled readonly value="'.Html::encode($capacityType[$courseDetail->student_capacity['type']] ?? '').'">';
                             ?>
                         </div>
                         <?php
@@ -1407,7 +1420,7 @@ $this->registerJs($digit);
                         <div class="col-3 col-md-3 col-sm-12 dol-lg-3 col-xl-3 mb-3" id="from1">
                             <label for="nameWithTitle" class="form-label">تاریخ شروع دوره *</label>
                             <?php
-                            if($allowEdit || Yii::$app->user->identity->role == 'emp')
+                            if($allowEdit && CourseAccess::isAdmin())
                                echo  $form->field($courseDetail, 'lessons[0][date][from]')->textInput(
                                     [
                                         'class' => 'form-control dob-picker text-start',
@@ -1418,13 +1431,13 @@ $this->registerJs($digit);
                                     ]
                                 )->label(false);
                             else if(array_key_exists('from', $courseDetail->lessons[0]['date']))
-                                echo '<input type="text" class="form-control text-start" disabled readonly value="'.$courseDetail->lessons[0]['date']['from'].'">';
+                                echo '<input type="text" class="form-control text-start" disabled readonly value="'.Html::encode($courseDetail->lessons[0]['date']['from']).'">';
                             ?>
                         </div>
                         <div class="col-3 col-md-3 col-sm-12 dol-lg-3 col-xl-3 mb-3" id="to1">
                             <label for="nameWithTitle" class="form-label">تاریخ اتمام دوره *</label>
                             <?php
-                            if($allowEdit || Yii::$app->user->identity->role == 'emp')
+                            if($allowEdit && CourseAccess::isAdmin())
                                  echo $form->field($courseDetail, 'lessons[0][date][to]')->textInput(
                                     [
                                         'class' => 'form-control dob-picker text-start',
@@ -1435,7 +1448,7 @@ $this->registerJs($digit);
                                     ]
                                 )->label(false);
                             else if(array_key_exists('to', $courseDetail->lessons[0]['date']))
-                                echo '<input type="text" class="form-control text-start" disabled readonly value="'.$courseDetail->lessons[0]['date']['to'].'">';
+                                echo '<input type="text" class="form-control text-start" disabled readonly value="'.Html::encode($courseDetail->lessons[0]['date']['to']).'">';
                             ?>
                         </div>
                         <div class="col-3 col-md-3 col-sm-12 dol-lg-3 col-xl-3 mb-3">
@@ -1486,17 +1499,17 @@ $this->registerJs($digit);
                         </div>
                         <hr class="mt-2">
                         <div class="col-4 col-md-4 col-sm-12 dol-lg-4 col-xl-4 mb-3">
-                            <label for="select2Basic" class="form-label">دانشکده *</label>
+                            <label for="select2Basic" class="form-label">واحد *</label>
                             <?php
                             echo $form->field($courseDetail, 'college')->dropDownList(
                                 $colleges,
                                 [
-                                    'prompt' => 'لطفا دانشکده را مشخص کنید',
+                                    'prompt' => 'لطفا واحد را مشخص کنید',
                                     'class' => 'select2 form-select form-select-lg',
                                     'required' => true,
                                     'data-allow-clear' => true,
                                     "data" => "colleges",
-                                    'oninvalid' => 'this.setCustomValidity(\'لطفا دانشکده را مشخص کنید\')',
+                                    'oninvalid' => 'this.setCustomValidity(\'لطفا واحد را مشخص کنید\')',
                                     'oninput' => 'setCustomValidity(\'\')',
                                     'onchange' => '
                                                             $.get( "' . Url::toRoute('/courses/brokers') . '", { id: $(this).val() } )
@@ -1554,7 +1567,7 @@ $this->registerJs($digit);
                                 <?php
                                 } else {
                                 ?>
-                                    <span class="badge bg-label-warning">در انتظار انتخاب دانشکده</span>
+                                    <span class="badge bg-label-warning">در انتظار انتخاب واحد</span>
                                 <?php
                                 }
                                 ?>
@@ -1623,7 +1636,7 @@ $this->registerJs($digit);
                                     <?php
                                 } else {
                                     ?>
-                                    <span class="badge bg-label-warning">در انتظار انتخاب دانشکده</span>
+                                    <span class="badge bg-label-warning">در انتظار انتخاب واحد</span>
                                     <?php
                                 }
                                 ?>
@@ -1682,7 +1695,7 @@ $this->registerJs($digit);
                                     )->label(false);
                                 } else {
                                 ?>
-                                    <span class="badge bg-label-warning">در انتظار انتخاب دانشکده</span>
+                                    <span class="badge bg-label-warning">در انتظار انتخاب واحد</span>
                                 <?php
                                 }
                                 ?>
@@ -1701,9 +1714,11 @@ $this->registerJs($digit);
                     ?>
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <h4 class="card-title mb-0">کدهای تخفیف ثبت شده</h4>
+                        <?php if (CourseAccess::canSetDiscount()): ?>
                         <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#add_discount_code">
                             افزودن کد تخفیف
                         </button>
+                        <?php endif; ?>
                     </div>
                     <?php
                     $discountRow = 0;
@@ -1720,12 +1735,12 @@ $this->registerJs($digit);
                                 <div class="collapse navbar-collapse" id="navbar-ex-8">
                                     <div class="navbar-nav me-auto">
                                         <a class="nav-item nav-link active" href="javascript:void(0)">مبلغ تخفیف: <?= number_format($discount->amount) . ' تومان' ?></a>
-                                        <a class="nav-item nav-link active" href="javascript:void(0)">کد تخفیف: <?= $discount->code ?></a>
-                                        <a class="nav-item nav-link active" href="javascript:void(0)">تعداد: <?= $discount->count ?></a>
+                                        <a class="nav-item nav-link active" href="javascript:void(0)">کد تخفیف: <?= Html::encode($discount->code) ?></a>
+                                        <a class="nav-item nav-link active" href="javascript:void(0)">تعداد: <?= Html::encode($discount->count) ?></a>
                                         <a class="nav-item nav-link active" href="javascript:void(0)">تعداد استفاده شده: <?= $used ?></a>
                                     </div>
                                     <?php
-                                    if($discount->used == null)
+                                    if($discount->used == null && CourseAccess::canSetDiscount())
                                     {
                                         ?>
                                         <ul class="navbar-nav ms-lg-auto">
@@ -1763,7 +1778,7 @@ $this->registerJs($digit);
                                         ); ?>
                                         <?php echo $form->field($discount, '_id')->hiddenInput()->label(false); ?>
                                         <div class="row">
-                                            آیا از حذف کد تخفیف با مبلغ <?= number_format($discount->amount) ?> تومان و کد <?= $discount->code  ?> مطمئن هستید؟
+                                            آیا از حذف کد تخفیف با مبلغ <?= number_format($discount->amount) ?> تومان و کد <?= Html::encode($discount->code) ?> مطمئن هستید؟
                                         </div>
                                     </div>
                                     <div class="modal-footer">
@@ -1784,9 +1799,11 @@ $this->registerJs($digit);
                 {
                     ?>
                     <div class="alert alert-warning text-dark" role="alert">برای این دوره تا کنون کد تخفیفی ثبت نشده است</div>
+                    <?php if (CourseAccess::canSetDiscount()): ?>
                     <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#add_discount_code">
                         افزودن کد تخفیف
                     </button>
+                    <?php endif; ?>
                     <?php
                 }
                 ?>
@@ -1917,7 +1934,7 @@ $this->registerJs($digit);
                                                 if ($registrantDetail->role == 'user')
                                                     $role = 'ادمین';
                                                 else if ($registrantDetail->role == 'emp')
-                                                    $role = 'کارشناس دانشکده';
+                                                    $role = 'کارشناس واحد';
                                                 else if ($registrantDetail->role == 'broker')
                                                     $role = 'کارگزار';
                                                 $registrant = $registrantDetail->first_name . ' ' . $registrantDetail->last_name . '(' . $role . ')';
@@ -1974,12 +1991,6 @@ $this->registerJs($digit);
                                                 ?>
                                                 <a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#<?= $changeStatus ?>">تغییر وضعیت</a>
                                                 <a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#<?= $changeRole ?>">تغییر نقش</a>
-                                                <?php
-                                            }
-                                            if (Yii::$app->user->identity->role == 'user' || Yii::$app->user->identity->role == 'emp' || (Yii::$app->user->identity->role == 'teacher' && Yii::$app->user->identity->mentor != true))
-                                            {
-                                                ?>
-                                                <a class="dropdown-item show-course-scores" href="#" data-bs-toggle="modal" data-bs-target="#show-course-scores" id="<?php echo (string) $courseDetail->_id . '-' . (string) $member->_id; ?>">ثبت نمره</a>
                                                 <?php
                                             }
                                             ?>
@@ -2185,7 +2196,7 @@ $this->registerJs($digit);
                                                         <path d="M8 17C8 17.5523 7.55228 18 7 18C6.44772 18 6 17.5523 6 17C6 16.4477 6.44772 16 7 16C7.55228 16 8 16.4477 8 17Z" fill="#1C274C"/>
                                                         <path d="M8 13C8 13.5523 7.55228 14 7 14C6.44772 14 6 13.5523 6 13C6 12.4477 6.44772 12 7 12C7.55228 12 8 12.4477 8 13Z" fill="#1C274C"/>
                                                     </svg>
-                                                    تاریخ پرداخت: <?= $value->payment_info['date'] ?>
+                                                    تاریخ پرداخت: <?= Html::encode($value->payment_info['date'] ?? '') ?>
                                                 </div>
                                                 <div class="alert alert-success alert-dismissible d-flex align-items-center" role="alert">
                                                     <svg class="me-2" width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">

@@ -28,6 +28,18 @@ class AdobeConnectPlatform implements ClassroomPlatform
         return $response !== null;
     }
 
+    public function createCourseMeetings($courseId, $newLessonId = null)
+    {
+        $path = '/adobe-connect/create-meeting/' . rawurlencode((string) $courseId);
+        if ($newLessonId !== null && $newLessonId !== '')
+            $path .= '?new-lesson=' . rawurlencode((string) $newLessonId);
+        $response = $this->call($path);
+        if ($response === null)
+            return null;
+        $decoded = json_decode($response);
+        return is_object($decoded) && isset($decoded->status) && $decoded->status == 'ok';
+    }
+
     public function removeCourseUser($user, $courseId)
     {
         $response = $this->call('/adobe-connect/remove-course-user/' . rawurlencode((string) $user->_id) . '/' . rawurlencode((string) $courseId));

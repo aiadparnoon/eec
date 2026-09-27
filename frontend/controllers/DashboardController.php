@@ -451,256 +451,194 @@ class DashboardController extends \common\component\Controller
         return Admin::find()->where(['username' => $username])->one();
     }
 
+    // ================================================ فرآیند بررسی و تأیید دوره (کوتاه‌مدت و میان‌مدت)
+    // امنیتی (صورتجلسه ۱۴۰۳/۴/۳۱، بند ۶): تأیید نهایی فقط توسط مدیر (رئیس مرکز)؛ کارشناس واحد فقط
+    // دوره‌های واحد خودش را بررسی می‌کند؛ از فرم فقط «دلیل» پذیرفته می‌شود (نه mass assignment).
+    // در هر وضعیت فقط یک برچسب فعال است (CourseStatus).
+
     public function actionConfirm_package()
     {
-        if(Yii::$app->request->isPost)
-        {
-            $package = Courses::findOne(Yii::$app->request->post()['Courses']['_id']);
-            if($package != null)
-            {
-                $flag = 0;
-                $college = Colleges::findOne($package->college);
-                if($package->student_capacity['type'] != '3')
-                {
-                    if($college != null)
-                    {
-                        if($college->financial_info == null)
-                            $flag = 1;
-                        else if($college->financial_info['id'] == '')
-                            $flag = 1;
-                    }
-                    if($package->broker != null)
-                    {
-                        $broker = Brokers::findOne($package->broker['_id']);
-                        if($broker !== null)
-                        {
-                            if($broker->financial_info == null)
-                                $flag = 2;
-                            else if($broker->financial_info['id'] == '')
-                                $flag = 2;
-                            if($package->date != null)
-                            {
-                                $packageDate = $package->date['to'];
-                                $contractDate = null;
-                                if($broker->contracts != null)
-                                {
-                                    foreach ($broker->contracts as $item)
-                                        if($package->broker['contract'] == $item['id'])
-                                            if(array_key_exists('expiration_date', $item))
-                                                $contractDate = $item['expiration_date'];
-                                }
-                                if($packageDate != null && $contractDate != null)
-                                {
-                                    $contractDate = str_replace('-','/', $contractDate);
-                                    $packageDate = str_replace('-','/', $packageDate);
-                                    if(!$this->isPackageDateValid($contractDate, $packageDate))
-                                        $flag = '3';
-                                    if(!$this->isContractDateValid($contractDate))
-                                        $flag = '4';
-                                }
-                            }
-                        }
-                    }
-                }
-                if($package->status != '1' && $flag == 0)
-                {
-                    $lastLicense = Generals::find()->where(['type' => 'license_code'])->one();
-                    if($lastLicense != null)
-                    {
-                        if($college != null)
-                        {
-                            $package->status = '1';
-                            $package->license_code = $college->prefix.'-'.(string) ($lastLicense->data + 1);
-                            if($package->save())
-                            {
-                                $lastLicense->updateCounters(['data' => 1]);
-                                $lastLicense->save();
-                                // Call AdobeConnect For Create Meetings Course
-                                $adminRole = Admin::find()->where(['role' => 'user'])->one();
-                                if($adminRole != null &&  ($package->content_type == '1' || $package->content_type == '2'))
-                                {
-                                    $curl = curl_init();
+        $package = $this->workflowCourse();
+        if ($package === null || Yii::$app->user->identity->role !== 'user')
+            return $this->workflowBack('error', 'دوره یافت نشد یا تأیید نهایی فقط توسط مدیر سیستم امکان‌پذیر است', $package);
+        if ((string) $package->status === \app\components\CourseStatus::ACTIVE)
+            return $this->workflowBack('info', 'این دوره قبلاً تأیید شده است', $package);
 
-                                    curl_setopt_array($curl, array(
-                                        CURLOPT_URL => Yii::getAlias('@baseUrl').'/adobe-connect/create-meeting/'.(string) $package->_id,
-                                        CURLOPT_RETURNTRANSFER => true,
-                                        CURLOPT_ENCODING => '',
-                                        CURLOPT_MAXREDIRS => 10,
-                                        CURLOPT_TIMEOUT => 0,
-                                        CURLOPT_FOLLOWLOCATION => true,
-                                        CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-                                        CURLOPT_CUSTOMREQUEST => 'POST',
-                                        CURLOPT_HTTPHEADER => array(
-                                            '_id: '.(string) $adminRole->_id
-                                        ),
-                                    ));
-                                    $response = curl_exec($curl);
-                                    curl_close($curl);
-                                }
-                                // Call AdobeConnect For Create Meetings Course
-                                Yii::$app->session->setFlash('status','6');
-                            }
-                            else
-                                Yii::$app->session->setFlash('status','2');
-                        }
-                    }
-                }
-                else if($flag == 1)
-                    Yii::$app->session->setFlash('status','8');
-                else if($flag == 2)
-                    Yii::$app->session->setFlash('status','9');
-                else if($flag == 3)
-                    Yii::$app->session->setFlash('status','16');
-                else if($flag == 4)
-                    Yii::$app->session->setFlash('status','18');
-            }
-        }
-        return $this->redirect(['../'.Yii::$app->request->post('page').'/index?CoursesSearch[college]='.$package->college]);
-    }
+        $college = Colleges::findOne($package->college);
+        $blocker = $this->approvalBlocker($package, $college);
+        if ($blocker !== null)
+            return $this->workflowBack('error', $blocker[0], $package, $blocker[1]);
+        $counter = Yii::$app->mongodb->getCollection(['eec', 'generals'])
+            ->findAndModify(['type' => 'license_code'], ['$inc' => ['data' => 1]], ['new' => true]);
+        if (!isset($counter['data']) || $college === null || (string) $college->prefix === '')
+            return $this->workflowBack('error', 'تولید کد مجوز ممکن نشد (کد واحد یا شمارنده‌ی کد مجوز تعریف نشده است)', $package);
 
-    public function actionConfirm_package_from_college()
-    {
-        if(Yii::$app->request->isPost)
-        {
-            $package = Courses::findOne(Yii::$app->request->post()['Courses']['_id']);
-            if($package != null)
-            {
-                if($package->college == Yii::$app->user->identity->college)
-                {
-                    $package->status = '2';
-                    if($package->save())
-                        Yii::$app->session->setFlash('status','15');
-                    else
-                        Yii::$app->session->setFlash('status','2');
-                }
-            }
-        }
-        return $this->redirect(['../'.Yii::$app->request->post('page').'/index?CoursesSearch[college]='.$package->college]);
+        \app\components\CourseStatus::setReviewed($package, \app\components\CourseStatus::ACTIVE);
+        $package->license_code = $college->prefix . '-' . (int) $counter['data'];
+        if (!$package->save(false))
+            return $this->workflowBack('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید', $package);
+        if (\app\components\classroom\ClassroomPlatforms::hasOnlineClass($package)
+            && \app\components\classroom\ClassroomPlatforms::forCourse($package)->createCourseMeetings((string) $package->_id) !== true)
+            return $this->workflowBack('warning', 'دوره تأیید شد اما ساخت کلاس آنلاین ناموفق بود؛ از فهرست دوره‌ها ثبت مجدد کنید', $package);
+        return $this->workflowBack('success', 'دوره تأیید و فعال شد (کد مجوز ' . $package->license_code . ')', $package);
     }
 
     public function actionBack_package()
     {
-        if(Yii::$app->request->isPost)
-        {
-            $package = Courses::findOne(Yii::$app->request->post()['Courses']['_id']);
-            if($package != null)
-            {
-                if($package->status != '4')
-                {
-                    $package->load(Yii::$app->request->post());
-                    if(Yii::$app->user->identity->role == 'user')
-                        $package->status = '4';
-                    else
-                        $package->status = '8';
-                    if($package->save())
-                        Yii::$app->session->setFlash('status','6');
-                    else
-                        Yii::$app->session->setFlash('status','2');
-                }
-            }
-        }
-        return $this->redirect(['../'.Yii::$app->request->post('page')]);
-    }
-
-    public function actionBack_package_from_college()
-    {
-        if(Yii::$app->request->isPost)
-        {
-            $package = Courses::findOne(Yii::$app->request->post()['Courses']['_id']);
-            if($package != null)
-            {
-                if($package->status != '8')
-                {
-                    $package->load(Yii::$app->request->post());
-                    $package->status = '8';
-                    if($package->save())
-                        Yii::$app->session->setFlash('status','6');
-                    else
-                        Yii::$app->session->setFlash('status','2');
-                }
-            }
-        }
-        return $this->redirect(['../'.Yii::$app->request->post('page')]);
+        $package = $this->workflowCourse();
+        if ($package === null || !$this->canReview($package))
+            return $this->workflowBack('error', 'دوره یافت نشد یا به آن دسترسی ندارید', $package);
+        $isAdmin = Yii::$app->user->identity->role === 'user';
+        $target = $isAdmin ? \app\components\CourseStatus::NEEDS_CORRECTION : \app\components\CourseStatus::UNIT_CORRECTION;
+        return $this->review($package, $target, 'دوره برای اصلاح بازگردانده شد');
     }
 
     public function actionReject_package()
     {
-        if(Yii::$app->request->isPost)
-        {
-            $package = Courses::findOne(Yii::$app->request->post()['Courses']['_id']);
-            if($package != null)
-            {
-                if($package->status != '5')
-                {
-                    $package->load(Yii::$app->request->post());
-                    if(Yii::$app->user->identity->role == 'user')
-                        $package->status = '5';
-                    else
-                        $package->status = '9';
-                    if($package->save())
-                        Yii::$app->session->setFlash('status','6');
-                    else
-                        Yii::$app->session->setFlash('status','2');
-                }
-            }
-        }
-        return $this->redirect(['../'.Yii::$app->request->post('page')]);
+        $package = $this->workflowCourse();
+        if ($package === null || !$this->canReview($package))
+            return $this->workflowBack('error', 'دوره یافت نشد یا به آن دسترسی ندارید', $package);
+        $isAdmin = Yii::$app->user->identity->role === 'user';
+        $target = $isAdmin ? \app\components\CourseStatus::REJECTED : \app\components\CourseStatus::UNIT_REJECTED;
+        return $this->review($package, $target, 'دوره رد شد');
+    }
+
+    public function actionConfirm_package_from_college()
+    {
+        $package = $this->workflowCourse();
+        if ($package === null || !$this->isOwnUnitCourse($package))
+            return $this->workflowBack('error', 'دوره یافت نشد یا متعلق به واحد شما نیست', $package);
+        if ((string) $package->status !== \app\components\CourseStatus::AWAITING_UNIT)
+            return $this->workflowBack('warning', 'این دوره در انتظار بررسی واحد نیست', $package);
+        \app\components\CourseStatus::setReviewed($package, \app\components\CourseStatus::AWAITING);
+        if ($package->save(false))
+            return $this->workflowBack('success', 'دوره تأیید و برای بررسی مرکز ارسال شد', $package);
+        return $this->workflowBack('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید', $package);
+    }
+
+    public function actionBack_package_from_college()
+    {
+        $package = $this->workflowCourse();
+        if ($package === null || !$this->isOwnUnitCourse($package))
+            return $this->workflowBack('error', 'دوره یافت نشد یا متعلق به واحد شما نیست', $package);
+        return $this->review($package, \app\components\CourseStatus::UNIT_CORRECTION, 'دوره برای اصلاح به کارگزار بازگردانده شد');
     }
 
     public function actionReject_package_from_college()
     {
-        if(Yii::$app->request->isPost)
-        {
-            $package = Courses::findOne(Yii::$app->request->post()['Courses']['_id']);
-            if($package != null)
-            {
-                if($package->status != '9')
-                {
-                    $package->load(Yii::$app->request->post());
-                    $package->status = '9';
-                    if($package->save())
-                        Yii::$app->session->setFlash('status','6');
-                    else
-                        Yii::$app->session->setFlash('status','2');
-                }
-            }
-        }
-        return $this->redirect(['../'.Yii::$app->request->post('page')]);
+        $package = $this->workflowCourse();
+        if ($package === null || !$this->isOwnUnitCourse($package))
+            return $this->workflowBack('error', 'دوره یافت نشد یا متعلق به واحد شما نیست', $package);
+        return $this->review($package, \app\components\CourseStatus::UNIT_REJECTED, 'دوره توسط واحد رد شد');
     }
 
+    /**
+     * ارسال (مجدد) برای بررسی. از «نیاز به اصلاح» → فقط «اصلاح‌شده، در انتظار بررسی».
+     */
     public function actionSend_course_to_admin()
     {
-        if(Yii::$app->request->isPost)
-        {
-            $package = Courses::findOne(Yii::$app->request->post()['Courses']['_id']);
-            if($package != null)
-            {
-                $nullLessons = true;
-                if($package->lessons != null)
-                    if(count($package->lessons) > 0)
-                        $nullLessons = false;
-                if(!$nullLessons)
-                {
-                    if($package->status == '4')
-                        $package->modified = true;
-                    else
-                    {
-                        if(Yii::$app->user->identity->role == 'broker')
-                            $package->status = '7';
-                        else
-                            $package->status = '2';
-                    }
+        $package = $this->workflowCourse();
+        if ($package === null || !\app\components\CourseAccess::canManage($package))
+            return $this->workflowBack('error', 'دوره یافت نشد یا به آن دسترسی ندارید', $package);
+        if (!is_array($package->lessons) || count($package->lessons) === 0)
+            return $this->workflowBack('error', 'دوره هیچ درسی ندارد؛ ابتدا درس‌ها را اضافه کنید', $package);
+        \app\components\CourseStatus::submit($package, Yii::$app->user->identity->role === 'broker');
+        if ($package->save(false))
+            return $this->workflowBack('success', 'دوره برای بررسی ارسال شد', $package);
+        return $this->workflowBack('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید', $package);
+    }
 
-                    if($package->save())
-                        Yii::$app->session->setFlash('status','6');
-                    else
-                        Yii::$app->session->setFlash('status','2');
+    /**
+     * @return Courses|null
+     */
+    private function workflowCourse()
+    {
+        $input = Yii::$app->request->post('Courses');
+        $id = is_array($input) && isset($input['_id']) && is_string($input['_id']) ? $input['_id'] : '';
+        return preg_match('/^[a-f0-9]{24}$/i', $id) ? Courses::findOne($id) : null;
+    }
+
+    /** مدیر: همه؛ کارشناس واحد: فقط دوره‌های واحد خودش */
+    private function canReview(Courses $package)
+    {
+        $role = Yii::$app->user->identity->role;
+        return $role === 'user' || ($role === 'emp' && $this->isOwnUnitCourse($package));
+    }
+
+    private function isOwnUnitCourse(Courses $package)
+    {
+        return Yii::$app->user->identity->role === 'emp'
+            && in_array((string) $package->college, \app\components\CourseAccess::units(), true);
+    }
+
+    /**
+     * بازگشت/رد با دلیل؛ فقط rejection_reason از فرم خوانده می‌شود.
+     */
+    private function review(Courses $package, $status, $message)
+    {
+        if ((string) $package->status === $status)
+            return $this->workflowBack('info', 'وضعیت دوره از قبل همین است', $package);
+        $input = Yii::$app->request->post('Courses');
+        $reason = is_array($input) && isset($input['rejection_reason']) && is_scalar($input['rejection_reason']) ? trim((string) $input['rejection_reason']) : '';
+        if ($reason === '')
+            return $this->workflowBack('error', 'دلیل را وارد کنید', $package);
+        $package->rejection_reason = mb_substr($reason, 0, 2000, 'UTF-8');
+        \app\components\CourseStatus::setReviewed($package, $status);
+        if ($package->save(false))
+            return $this->workflowBack('success', $message, $package);
+        return $this->workflowBack('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید', $package);
+    }
+
+    /**
+     * موانع تأیید (منطق قبلی): شناسه‌ی حساب واحد/کارگزار و اعتبار تاریخ قرارداد کارگزار.
+     *
+     * @return array|null [پیام, کد status صفحه‌های قدیمی]
+     */
+    private function approvalBlocker(Courses $package, $college)
+    {
+        if (is_array($package->student_capacity) && isset($package->student_capacity['type']) && (string) $package->student_capacity['type'] === '3')
+            return null; // ظرفیت سازمانی: پرداخت آنلاین ندارد
+        if ($college !== null && (!is_array($college->financial_info) || empty($college->financial_info['id'])))
+            return ['شناسه‌ی حساب واحد ثبت نشده است', '8'];
+        if (is_array($package->broker) && !empty($package->broker['_id'])) {
+            $broker = Brokers::findOne($package->broker['_id']);
+            if ($broker !== null) {
+                if (!is_array($broker->financial_info) || empty($broker->financial_info['id']))
+                    return ['شناسه‌ی حساب کارگزار ثبت نشده است', '9'];
+                $packageDate = is_array($package->date) && !empty($package->date['to']) ? (string) $package->date['to']
+                    : (isset($package->lessons[0]['date']['to']) ? (string) $package->lessons[0]['date']['to'] : null);
+                $contractDate = null;
+                foreach ((array) $broker->contracts as $item)
+                    if (is_array($item) && isset($item['id'], $package->broker['contract']) && (string) $item['id'] === (string) $package->broker['contract'] && !empty($item['expiration_date']))
+                        $contractDate = (string) $item['expiration_date'];
+                if ($packageDate !== null && $contractDate !== null) {
+                    $contractDate = str_replace('-', '/', $contractDate);
+                    $packageDate = str_replace('-', '/', $packageDate);
+                    if (!$this->isContractDateValid($contractDate))
+                        return ['قرارداد کارگزار منقضی شده است', '18'];
+                    if (!$this->isPackageDateValid($contractDate, $packageDate))
+                        return ['تاریخ پایان دوره بعد از پایان قرارداد کارگزار است', '16'];
                 }
-                else
-                    Yii::$app->session->setFlash('status','17');
             }
         }
-        return $this->redirect(['../'.Yii::$app->request->post('page')]);
+        return null;
+    }
+
+    /**
+     * برگشت به صفحه‌ی دوره‌ها با پیام. «page» فقط از لیست سفید پذیرفته می‌شود.
+     */
+    private function workflowBack($type, $message, $package = null, $legacyCode = null)
+    {
+        $page = (string) Yii::$app->request->post('page');
+        if (!in_array($page, ['courses', 'packages', 'dashboard'], true))
+            $page = $package !== null && (string) $package->type === '1' ? 'courses' : 'packages';
+        $flashKey = $page === 'courses' ? CoursesController::FLASH : 'status-message';
+        Yii::$app->session->setFlash($flashKey, ['type' => $type, 'message' => $message]);
+        if ($page !== 'courses') {
+            // صفحه‌های قدیمی هنوز با کدهای status کار می‌کنند
+            Yii::$app->session->setFlash('status', $legacyCode !== null ? $legacyCode : ($type === 'success' ? '6' : '2'));
+        }
+        return $this->redirect(\app\components\SafeRedirect::referrer([$page . '/index']));
     }
 
     public function statistics($type, $status)
