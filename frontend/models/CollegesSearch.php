@@ -17,11 +17,8 @@ class CollegesSearch extends Colleges
     public function rules()
     {
         return [
-            [[
-                'title',
-                'logo',
-                'comment',
-            ], 'safe'],
+            // فقط رشته؛ آرایه (مثل title[$ne]=) رد می‌شود
+            [['title'], 'string', 'max' => 100],
         ];
     }
 
@@ -60,8 +57,7 @@ class CollegesSearch extends Colleges
         }
 
         // grid filtering conditions
-        $query->andFilterWhere(['like', '_id', $this->_id])
-            ->andFilterWhere(['like', 'title', $this->title])
+        $query->andFilterWhere(['like', 'title', is_string($this->title) ? trim($this->title) : null])
             ->orderBy(['_id' => SORT_DESC]);
 
         return $dataProvider;
