@@ -7,6 +7,7 @@ use app\models\Users;
 use app\models\UsersSearch;
 use app\models\Colleges;
 use app\models\Courses;
+use app\components\StudentAccess;
 use common\models\Admin;
 use yii\filters\AccessControl;
 use yii\helpers\ArrayHelper;
@@ -152,7 +153,9 @@ class UsersManageController extends Controller
             if($find == null)
             {
                 $model = new Users();
-                $model->load(Yii::$app->request->post());
+                // فقط فیلدهای فرم؛ courses/college/principal_id نباید از فرم قابل تزریق باشند
+                $input = Yii::$app->request->post('Users');
+                $model->setAttributes(array_intersect_key(is_array($input) ? $input : [], array_flip(['first_name', 'last_name'])));
                 $model->username = strtolower(Yii::$app->request->post()['Users']['username']);
                 $model->setPassword(Yii::$app->request->post()['Users']['password_hash']);
                 $model->auth_key = Yii::$app->security->generateRandomString();
@@ -302,7 +305,7 @@ class UsersManageController extends Controller
     {
         if(Yii::$app->request->isPost)
         {
-            $user = Users::findOne(Yii::$app->request->post()['Users']['_id']);
+            $user = $this->findManagedStudent();
             if($user != null)
             {
                 if($user->status == 9)
@@ -322,13 +325,14 @@ class UsersManageController extends Controller
     {
         if(Yii::$app->request->isPost)
         {
-            $user = Users::findOne(Yii::$app->request->post()['Users']['_id']);
+            $user = $this->findManagedStudent();
             if($user != null)
             {
                 if($user->courses != null)
                 {
                     $userCourses = $user->courses;
-                    if($userCourses[Yii::$app->request->post('row')]['_id'] == Yii::$app->request->post('courseId'))
+                    $row = Yii::$app->request->post('row');
+                    if(is_scalar($row) && isset($userCourses[$row]['_id']) && $userCourses[$row]['_id'] == Yii::$app->request->post('courseId'))
                     {
                         $myCourse = $userCourses[Yii::$app->request->post('row')];
                         if($myCourse['status'] == '0') // if Courses Not Inserted in AdobeConnect Call API For Insert Course in AdobeConnet
@@ -369,86 +373,91 @@ class UsersManageController extends Controller
     {
         if(Yii::$app->request->isPost)
         {
-            $user = Users::findOne(Yii::$app->request->post()['Users']['_id']);
+            $user = $this->findManagedStudent();
             if($user != null)
             {
-                $user->load(Yii::$app->request->post());
-                if($user->principal_id != null)
-                {
-                    // Begin Call AdobeConnect For Remove Course
-                    $adminRole = Admin::find()->where(['role' => 'user'])->one();
-                    $response = null;
-                    if($adminRole != null)
-                    {
-                        $curl = curl_init();
-
-                        curl_setopt_array($curl, array(
-                            CURLOPT_URL => Yii::getAlias('@baseUrl').'/adobe-connect/update-user-info',
-                            CURLOPT_RETURNTRANSFER => true,
-                            CURLOPT_ENCODING => '',
-                            CURLOPT_MAXREDIRS => 10,
-                            CURLOPT_TIMEOUT => 0,
-                            CURLOPT_FOLLOWLOCATION => true,
-                            CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-                            CURLOPT_CUSTOMREQUEST => 'POST',
-                            CURLOPT_POSTFIELDS =>'{
-                                "principal_id": "'.(string) $user->principal_id.'",
-                                "username": "'.(string) $user->username.'",
-                                "first_name": "'.$user->first_name.'",
-                                "last_name": "'.$user->last_name.'"
-                            }',
-                            CURLOPT_HTTPHEADER => array(
-                                '_id: '.(string) $adminRole->_id,
-                                'Content-Type: application/json'
-                            ),
-                        ));
-                        $response = curl_exec($curl);
-                        $response = json_decode($response);
-                        curl_close($curl);
-                    }
-                    // End Call AdobeConnect For Remove Course
-                    if(property_exists($response,'status'))
-                    {
-                        if($response->status == 'ok')
-                        {
-                            if ($user->save())
-                                Yii::$app->session->setFlash('status', '8');
-                            else
-                                Yii::$app->session->setFlash('status', '2');
-                        }
-                        else
-                            Yii::$app->session->setFlash('status','9');
-                    }
-                    else
-                        Yii::$app->session->setFlash('status','9');
-                }
+                // فقط فیلدهای فرم ویرایش؛ نه college/registrant/courses/principal_id
+                $input = Yii::$app->request->post('Users');
+                $user->setAttributes(array_intersect_key(is_array($input) ? $input : [], array_flip(['first_name', 'last_name'])));
+                if($user->principal_id != null && !$this->updateOnlineClassUser($user))
+                    Yii::$app->session->setFlash('status', '9');
+                else if ($user->save())
+                    Yii::$app->session->setFlash('status', '8');
                 else
-                {
-                    if ($user->save())
-                        Yii::$app->session->setFlash('status', '8');
-                    else
-                        Yii::$app->session->setFlash('status', '2');
-                }
+                    Yii::$app->session->setFlash('status', '2');
             }
         }
         return $this->redirect(Yii::$app->request->referrer);
+    }
+
+    /**
+     * مشخصات کاربر را در سامانه‌ی کلاس آنلاین (فعلاً Adobe Connect) به‌روز می‌کند.
+     * در صورت قطع ارتباط، timeout (۱۵ ثانیه) یا پاسخ نامعتبر false برمی‌گرداند.
+     *
+     * @param Users $user
+     * @return bool
+     */
+    private function updateOnlineClassUser($user)
+    {
+        $adminRole = Admin::find()->where(['role' => 'user'])->one();
+        if($adminRole == null)
+            return false;
+
+        $curl = curl_init();
+        curl_setopt_array($curl, array(
+            CURLOPT_URL => Yii::getAlias('@baseUrl').'/adobe-connect/update-user-info',
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_ENCODING => '',
+            CURLOPT_MAXREDIRS => 10,
+            CURLOPT_CONNECTTIMEOUT => 10,
+            CURLOPT_TIMEOUT => 15,
+            CURLOPT_FOLLOWLOCATION => true,
+            CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+            CURLOPT_CUSTOMREQUEST => 'POST',
+            CURLOPT_POSTFIELDS => json_encode([
+                'principal_id' => (string) $user->principal_id,
+                'username' => (string) $user->username,
+                'first_name' => (string) $user->first_name,
+                'last_name' => (string) $user->last_name,
+            ], JSON_UNESCAPED_UNICODE),
+            CURLOPT_HTTPHEADER => array(
+                '_id: '.(string) $adminRole->_id,
+                'Content-Type: application/json'
+            ),
+        ));
+        $raw = curl_exec($curl);
+        $failed = $raw === false || curl_errno($curl) !== 0;
+        curl_close($curl);
+        if($failed)
+        {
+            Yii::warning('Adobe update-user-info failed for user '.(string) $user->_id, __METHOD__);
+            return false;
+        }
+
+        $response = json_decode($raw);
+        return is_object($response) && isset($response->status) && $response->status == 'ok';
     }
 
     public function actionChange_password()
     {
         if(Yii::$app->request->isPost)
         {
-            $user = Users::findOne(Yii::$app->request->post()['Users']['_id']);
-            if($user != null)
+            $user = $this->findManagedStudent();
+            $input = Yii::$app->request->post('Users');
+            $password = is_array($input) && isset($input['password_hash']) ? (string) $input['password_hash'] : '';
+            if($user != null && $password === '')
+                Yii::$app->session->setFlash('status','2');
+            else if($user != null)
             {
-                $user->password_hash = Yii::$app->security->generatePasswordHash(Yii::$app->request->post()['Users']['password_hash']);
+                $user->password_hash = Yii::$app->security->generatePasswordHash($password);
                 if($user->save())
                 {
                     Yii::$app->session->setFlash('status','11');
+                    // حساب مدرس (mentor) با همین نام کاربری هم هم‌زمان تغییر می‌کند
                     $teacher = Admin::find()->where(['username' => $user->username])->andWhere(['mentor' => true])->one();
                     if($teacher != null)
                     {
-                        $teacher->password_hash = Yii::$app->security->generatePasswordHash(Yii::$app->request->post()['Users']['password_hash']);
+                        $teacher->password_hash = Yii::$app->security->generatePasswordHash($password);
                         $teacher->save();
                     }
                 }
@@ -459,5 +468,19 @@ class UsersManageController extends Controller
         return $this->redirect(Yii::$app->request->referrer);
     }
 
-
+    /**
+     * دانشپذیرِ ارسال‌شده در Users[_id] را فقط اگر کاربر جاری به او دسترسی داشته باشد
+     * برمی‌گرداند؛ در غیر این صورت پیام «عدم دسترسی» ثبت و null برمی‌گردد (جلوگیری از IDOR).
+     *
+     * @return Users|null
+     */
+    private function findManagedStudent()
+    {
+        $input = Yii::$app->request->post('Users');
+        $id = is_array($input) && isset($input['_id']) ? $input['_id'] : null;
+        $user = StudentAccess::findStudent($id);
+        if($user == null)
+            Yii::$app->session->setFlash('status', '12');
+        return $user;
+    }
 }

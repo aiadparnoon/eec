@@ -6,6 +6,7 @@ use Yii;
 use yii\base\Model;
 use yii\data\ActiveDataProvider;
 use app\models\Users;
+use app\components\StudentAccess;
 
 /**
  * AdminSearch represents the model behind the search form of `app\models\Users`.
@@ -43,6 +44,8 @@ class UsersSearch extends Users
         $query = Users::find();
 
         // add conditions that should always apply here
+        // محدودیت دسترسی (مدیر: همه، کارشناس: دانشکده‌های خودش) — docs/specs/users-manage.md بند ۱
+        StudentAccess::applyScope($query);
 
         $dataProvider = new ActiveDataProvider([
             'query' => $query,
@@ -57,24 +60,13 @@ class UsersSearch extends Users
         }
 
         // grid filtering conditions
-        $user = Yii::$app->user->identity;
-        if($user->role == 'user' || $user->role == 'cnt')
-            $query->andFilterWhere(['like', '_id', $this->_id])
-                ->andFilterWhere(['like', 'last_name', $this->last_name])
-                ->andFilterWhere(['like', 'username', $this->username])
-                ->andFilterWhere(['like', 'first_name', $this->first_name])
-                ->andFilterWhere(['like', 'id', $this->id])
-//                ->andFilterWhere(['like', 'status', (int) $this->status])
-                ->orderBy(['_id'=>SORT_DESC]);
-        else
-            $query->andFilterWhere(['like', '_id', $this->_id])
-                ->andFilterWhere(['like', 'last_name', $this->last_name])
-                ->andFilterWhere(['like', 'username', $this->username])
-                ->andFilterWhere(['like', 'first_name', $this->first_name])
-                ->andFilterWhere(['like', 'id', $this->id])
-//                ->andFilterWhere([ 'status' => (int) $this->status])
-                ->andWhere(['registrant' => $user->username])
-                ->orderBy(['_id'=>SORT_DESC]);
+        $query->andFilterWhere(['like', '_id', $this->_id])
+            ->andFilterWhere(['like', 'last_name', $this->last_name])
+            ->andFilterWhere(['like', 'username', $this->username])
+            ->andFilterWhere(['like', 'first_name', $this->first_name])
+            ->andFilterWhere(['like', 'id', $this->id])
+//            ->andFilterWhere([ 'status' => (int) $this->status])
+            ->orderBy(['_id'=>SORT_DESC]);
         return $dataProvider;
     }
 }

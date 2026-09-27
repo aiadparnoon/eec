@@ -78,7 +78,7 @@ JS;
 JS;
     else if(Yii::$app->session->get('status') == '9')
         $script = <<< JS
-    toastr.success("خطایی در برقراری ارتباط با ادوبی کانکت رخ داده است، لطفا مجددا تلاش کنید", {
+    toastr.error("ارتباط با سرور Adobe برقرار نشد، تغییرات ذخیره نشد", {
             positionClass: "toast-top-center",
             containerId: "toast-top-center",
             "closeButton": "true"
@@ -95,6 +95,14 @@ JS;
     else if(Yii::$app->session->get('status') == '11')
         $script = <<< JS
     toastr.success("رمز عبور مورد نظر تغییر یافت", {
+            positionClass: "toast-top-center",
+            containerId: "toast-top-center",
+            "closeButton": "true"
+        });
+JS;
+    else if(Yii::$app->session->get('status') == '12')
+        $script = <<< JS
+    toastr.error("دانشپذیر مورد نظر یافت نشد یا شما به آن دسترسی ندارید", {
             positionClass: "toast-top-center",
             containerId: "toast-top-center",
             "closeButton": "true"
