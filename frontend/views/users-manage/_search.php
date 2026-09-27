@@ -21,8 +21,8 @@ $yesNo = ['1' => 'بله', '0' => 'خیر'];
 $field = function ($attribute, $label, $input) {
     return '<div class="col-12 col-sm-6 col-lg-3"><label class="form-label" for="us-' . $attribute . '">' . $label . '</label>' . $input . '</div>';
 };
-$text = function ($attribute, $placeholder = '') use ($model) {
-    return Html::textInput('UsersSearch[' . $attribute . ']', $model->$attribute, ['id' => 'us-' . $attribute, 'class' => 'form-control', 'placeholder' => $placeholder, 'autocomplete' => 'off']);
+$text = function ($attribute, $placeholder = '', $extra = []) use ($model) {
+    return Html::textInput('UsersSearch[' . $attribute . ']', is_scalar($model->$attribute) ? $model->$attribute : '', array_merge(['id' => 'us-' . $attribute, 'class' => 'form-control', 'placeholder' => $placeholder, 'autocomplete' => 'off', 'maxlength' => 100], $extra));
 };
 $select = function ($attribute, $items, $prompt = 'همه') use ($model) {
     return Html::dropDownList('UsersSearch[' . $attribute . ']', $model->$attribute, $items, ['id' => 'us-' . $attribute, 'class' => 'form-select', 'prompt' => $prompt]);
@@ -31,7 +31,7 @@ $select = function ($attribute, $items, $prompt = 'همه') use ($model) {
 $this->registerCssFile('@web/assets/vendor/libs/select2/select2.css');
 $this->registerJs(<<<JS
 $('#us-course_id').select2({dropdownParent: $('#us-course_id').parent(), allowClear: true, placeholder: 'همه‌ی دوره‌ها', dir: 'rtl', width: '100%'});
-$('#us-college_id').select2({dropdownParent: $('#us-college_id').parent(), allowClear: true, placeholder: 'همه‌ی دانشکده‌ها', dir: 'rtl', width: '100%'});
+$('#us-college_id').select2({dropdownParent: $('#us-college_id').parent(), allowClear: true, placeholder: 'همه‌ی واحدها', dir: 'rtl', width: '100%'});
 if ($.fn.flatpickr) {
     $('.us-date').flatpickr({locale: 'fa', dateFormat: 'Y/m/d', disableMobile: true, allowInput: true});
 }
@@ -50,11 +50,11 @@ JS
                     </div>
                 </div>
                 <div class="col-12 col-sm-6 col-lg-3">
-                    <label class="form-label" for="us-college_id">دانشکده</label>
+                    <label class="form-label" for="us-college_id">واحد</label>
                     <?php
                     $collegeItems = $colleges;
                     if (\app\components\StudentAccess::isAdmin())
-                        $collegeItems = ['none' => 'بدون دانشکده'] + $collegeItems;
+                        $collegeItems = ['none' => 'بدون واحد'] + $collegeItems;
                     echo Html::dropDownList('UsersSearch[college_id]', $model->college_id, $collegeItems, ['id' => 'us-college_id', 'class' => 'form-select', 'prompt' => '']);
                     ?>
                 </div>
@@ -75,8 +75,8 @@ JS
                 <div class="row g-3">
                     <?= $field('first_name', 'نام', $text('first_name')) ?>
                     <?= $field('last_name', 'نام خانوادگی', $text('last_name')) ?>
-                    <?= $field('username', 'نام کاربری', $text('username', 'موبایل یا ایمیل')) ?>
-                    <?= $field('national_code', 'کد ملی', $text('national_code')) ?>
+                    <?= $field('username', 'نام کاربری', $text('username', 'موبایل یا ایمیل', ['data-input' => 'mobile-email', 'dir' => 'ltr'])) ?>
+                    <?= $field('national_code', 'کد ملی', $text('national_code', '', ['data-input' => 'digits', 'maxlength' => 10, 'dir' => 'ltr'])) ?>
                     <div class="col-12 col-lg-6">
                         <label class="form-label" for="us-course_id">دوره</label>
                         <?= Html::dropDownList('UsersSearch[course_id]', $model->course_id, $courses, ['id' => 'us-course_id', 'class' => 'form-select', 'prompt' => '']) ?>
@@ -85,11 +85,11 @@ JS
                     <?= $field('has_courses', 'دارای دوره', $select('has_courses', $yesNo)) ?>
                     <?= $field('registrant_type', 'ثبت کننده', $select('registrant_type', [
                         'me' => 'ثبت‌شده توسط من',
-                        'emp' => 'کارشناس دانشکده',
+                        'emp' => 'ثبت توسط واحد',
                         'user' => 'مدیر سیستم',
-                        'broker' => 'کارگزار',
-                        'self' => 'ثبت‌نام اینترنتی (خود دانشپذیر)',
-                        'unknown' => 'نامشخص',
+                        'broker' => 'کارگزار (کیف پول)',
+                        'self' => 'خرید مستقیم دوره (خود دانشپذیر)',
+                        'unknown' => 'ثبت قدیمی (بدون ثبت‌کننده)',
                     ])) ?>
                     <?= $field('has_national_code', 'اطلاعات هویتی (کد ملی)', $select('has_national_code', ['1' => 'تکمیل شده', '0' => 'تکمیل نشده'])) ?>
                     <?= $field('gender', 'جنسیت', $select('gender', ['1' => 'مرد', '0' => 'زن'])) ?>

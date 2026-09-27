@@ -39,7 +39,7 @@ $courseTitle = function ($id) use (&$courseTitles) {
                 <th>تاریخ</th>
                 <th>سفارش / پیگیری</th>
                 <th>مبلغ (تومان)</th>
-                <th>سهم دانشکده</th>
+                <th>سهم واحد</th>
                 <th>سهم کارگزار</th>
             </tr>
             </thead>

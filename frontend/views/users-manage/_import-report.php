@@ -8,7 +8,7 @@ use yii\helpers\Html;
 
 $sections = [
     'created' => ['دانشپذیران جدید ایجاد شده', 'success', 'bx-user-plus'],
-    'added' => ['دانشپذیران موجود که به دانشکده‌ی شما اضافه شدند', 'info', 'bx-transfer'],
+    'added' => ['دانشپذیران موجود که به واحد شما اضافه شدند', 'info', 'bx-transfer'],
     'unchanged' => ['دانشپذیران موجود بدون تغییر (از قبل عضو بودند)', 'secondary', 'bx-user-check'],
     'failed' => ['ناموفق', 'danger', 'bx-error'],
 ];

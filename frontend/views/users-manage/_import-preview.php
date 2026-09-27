@@ -13,7 +13,7 @@ $fa = function ($n) { return UsersImport::faDigits($n); };
 $columns = UsersImport::COLUMNS;
 $states = [
     'new' => ['جدید', 'success'],
-    'existing' => ['موجود؛ به دانشکده اضافه می‌شود', 'info'],
+    'existing' => ['موجود؛ به واحد اضافه می‌شود', 'info'],
     'existing_same' => ['موجود؛ بدون تغییر', 'secondary'],
     'invalid' => ['دارای خطا', 'danger'],
 ];
@@ -73,7 +73,7 @@ foreach ($analysis['rows'] as $row)
 
 <?= Html::beginForm(['add_user_from_excel'], 'post', ['class' => 'd-flex flex-wrap justify-content-between align-items-center mt-3 gap-2']) ?>
     <small class="text-muted">
-        <?= empty($collegeNames) ? 'دانشپذیران جدید بدون دانشکده ثبت می‌شوند.' : 'دانشپذیران به ' . Html::encode(implode('، ', $collegeNames)) . ' اضافه می‌شوند.' ?>
+        <?= empty($collegeNames) ? 'دانشپذیران جدید بدون واحد ثبت می‌شوند.' : 'دانشپذیران به ' . Html::encode(implode('، ', $collegeNames)) . ' اضافه می‌شوند.' ?>
         فایل بلافاصله پس از ثبت حذف می‌شود.
     </small>
     <?= Html::hiddenInput('token', $token) ?>

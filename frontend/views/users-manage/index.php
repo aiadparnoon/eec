@@ -113,8 +113,8 @@ JS
             <div class="col-12 col-xl-8">
                 <div class="card h-100">
                     <div class="card-header d-flex justify-content-between align-items-center">
-                        <h5 class="card-title mb-0">دانشپذیران به تفکیک دانشکده</h5>
-                        <small class="text-muted">هر دانشپذیر ممکن است عضو چند دانشکده باشد</small>
+                        <h5 class="card-title mb-0">دانشپذیران به تفکیک واحد</h5>
+                        <small class="text-muted">هر دانشپذیر ممکن است عضو چند واحد باشد</small>
                     </div>
                     <div class="card-body">
                         <div class="row g-3">
@@ -132,7 +132,7 @@ JS
                             <?php if (StudentAccess::isAdmin() && $stats['noCollege'] > 0): ?>
                                 <div class="col-12 col-md-6">
                                     <a class="d-flex justify-content-between mb-1 text-body" href="<?= Url::to(['index', 'UsersSearch' => ['college_id' => 'none']]) ?>">
-                                        <span class="text-muted">بدون دانشکده</span>
+                                        <span class="text-muted">بدون واحد</span>
                                         <span class="fw-semibold"><?= $fa($stats['noCollege']) ?></span>
                                     </a>
                                     <div class="progress college-bar"><div class="progress-bar bg-secondary" style="width: <?= round($stats['noCollege'] * 100 / $max) ?>%"></div></div>
@@ -188,7 +188,7 @@ JS
                     <th>#</th>
                     <th>دانشپذیر</th>
                     <th>کد ملی</th>
-                    <th>دانشکده‌ها</th>
+                    <th>واحدها</th>
                     <th>ثبت کننده</th>
                     <th class="text-center">دوره‌ها</th>
                     <th>وضعیت / تاریخ ثبت</th>

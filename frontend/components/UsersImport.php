@@ -18,6 +18,9 @@ class UsersImport
 {
     const MAX_FILE_SIZE = 10485760; // 10MB
     const MAX_ROWS = 3000;
+    /** سیاست طول رمز عبور (bcrypt فقط ۷۲ بایت اول را در نظر می‌گیرد) */
+    const PASSWORD_MIN = 6;
+    const PASSWORD_MAX = 72;
     const SESSION_KEY = 'usersImportFile';
     const COLUMNS = ['A' => 'نام', 'B' => 'نام خانوادگی', 'C' => 'نام کاربری', 'D' => 'رمز عبور', 'E' => 'نام انگلیسی', 'F' => 'نام خانوادگی انگلیسی', 'G' => 'جنسیت'];
 
@@ -132,6 +135,8 @@ class UsersImport
                 $seen[$v['C']] = $row['line'];
             if ($v['D'] === '')
                 $row['errors']['D'] = 'رمز عبور وارد نشده است';
+            else if (($passwordError = self::passwordError($v['D'])) !== null)
+                $row['errors']['D'] = $passwordError;
             foreach (['E', 'F'] as $col)
                 if ($v[$col] !== '' && !preg_match("/^[A-Za-z][A-Za-z .'\\-]*$/", $v[$col]))
                     $row['errors'][$col] = 'فقط حروف انگلیسی مجاز است';
@@ -203,6 +208,7 @@ class UsersImport
             $model->role = 'user';
             $model->status = Users::STATUS_ACTIVE;
             $model->registrant = (string) $identity->username;
+            $model->must_change_password = true; // رمز اولیه را کارکنان تعیین کرده‌اند (بند ۱.۳ صورتجلسه)
             $model->college = [];
             StudentAccess::addColleges($model, $colleges);
             $info = ['first_name_fa' => $v['A'], 'last_name_fa' => $v['B'], 'gender' => $v['G'] === '2' ? '0' : '1'];
@@ -231,6 +237,19 @@ class UsersImport
         if (preg_match('/^(?:\+98|0098|98)(9\d{9})$/', $value, $m))
             return '0' . $m[1];
         return $value;
+    }
+
+    /**
+     * @return string|null پیام خطا اگر رمز با سیاست طول هم‌خوان نباشد
+     */
+    public static function passwordError($password)
+    {
+        $length = mb_strlen((string) $password, 'UTF-8');
+        if ($length < self::PASSWORD_MIN)
+            return 'رمز عبور باید حداقل ' . self::faDigits(self::PASSWORD_MIN) . ' کاراکتر باشد';
+        if (strlen((string) $password) > self::PASSWORD_MAX)
+            return 'رمز عبور بیش از حد طولانی است';
+        return null;
     }
 
     public static function isValidUsername($value)

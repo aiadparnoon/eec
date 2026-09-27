@@ -106,6 +106,8 @@ class Users extends ActiveRecord implements IdentityInterface
             'principal_id',
             'applicant_info',
             'college',
+            // true: حساب توسط کارکنان ساخته شده و دانشپذیر باید در اولین ورود رمز را عوض کند
+            'must_change_password',
         ];
     }
 

@@ -18,7 +18,7 @@ class UsersSearch extends Users
     /** جست‌وجوی کلی: نام، نام خانوادگی، نام کاربری یا کد ملی */
     public $q;
     public $national_code;
-    /** شناسه‌ی دانشکده یا 'none' (بدون دانشکده) */
+    /** شناسه‌ی واحد یا 'none' (بدون واحد) */
     public $college_id;
     public $course_id;
     /** وضعیت در دوره: '0' ثبت‌نشده در کلاس آنلاین، '1' فعال، '2' غیرفعال */
@@ -162,6 +162,10 @@ class UsersSearch extends Users
 
     private function normalizeInput()
     {
+        // پارامتر آرایه‌ای (مثل q[]=x یا q[$ne]=x) پذیرفته نمی‌شود
+        foreach ($this->safeAttributes() as $attribute)
+            if ($this->$attribute !== null && !is_scalar($this->$attribute))
+                $this->$attribute = null;
         foreach (['q', 'first_name', 'last_name', 'username', 'national_code', 'created_from', 'created_to'] as $attribute)
             if (is_string($this->$attribute))
                 $this->$attribute = self::normalizeDigits($this->$attribute);
@@ -324,7 +328,7 @@ class UsersSearch extends Users
         ];
         $stats['withoutCourses'] = $stats['total'] - $stats['withCourses'];
 
-        // تعداد به تفکیک دانشکده (college رشته‌ای یا آرایه‌ای؛ $unwind هر دو را پوشش می‌دهد)
+        // تعداد به تفکیک واحد (college رشته‌ای یا آرایه‌ای؛ $unwind هر دو را پوشش می‌دهد)
         $scope = self::scopedQuery();
         $match = $scope->where ? Yii::$app->mongodb->getQueryBuilder()->buildCondition($scope->where) : [];
         $pipeline = [];

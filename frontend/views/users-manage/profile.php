@@ -115,7 +115,7 @@ CSS
                     <h6 class="pb-2 border-bottom mb-2">اطلاعات کلی</h6>
                     <ul class="list-unstyled profile-details mb-4">
                         <li><span class="label">کد ملی</span><span><?= !empty($info['id']) ? Html::encode($info['id']) : '<span class="badge bg-label-warning">ثبت نشده</span>' ?></span></li>
-                        <li><span class="label">دانشکده‌ها</span>
+                        <li><span class="label">واحدها</span>
                             <span class="text-end">
                                 <?php if (empty($collegeNames)): ?>—<?php endif; ?>
                                 <?php foreach ($collegeNames as $name): ?><span class="badge bg-label-primary mb-1"><?= Html::encode($name) ?></span> <?php endforeach; ?>

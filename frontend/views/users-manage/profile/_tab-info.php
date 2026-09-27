@@ -33,7 +33,7 @@ $groups = [
         'نام کاربری' => ['<span dir="ltr">' . Html::encode($student->username) . '</span>', true],
         'وضعیت' => [$student->status == Users::STATUS_INACTIVE ? '<span class="badge bg-label-danger">غیرفعال</span>' : '<span class="badge bg-label-success">فعال</span>', true],
         'نقش' => [$student->role == 'mentor' ? 'دستیار استاد' : 'دانشپذیر', false],
-        'دانشکده‌ها' => [implode('، ', UsersDirectory::collegeNames($student->college)) ?: null, false],
+        'واحدها' => [implode('، ', UsersDirectory::collegeNames($student->college)) ?: null, false],
         'ثبت کننده' => [$registrant['name'] . ($registrant['roleLabel'] !== '' ? ' (' . $registrant['roleLabel'] . ')' : ''), false],
         'تاریخ ثبت' => [UsersDirectory::jdate('Y/m/d H:i', hexdec(substr((string) $student->_id, 0, 8))), false],
         'آخرین به‌روزرسانی' => [$student->updated_at ? UsersDirectory::jdate('Y/m/d H:i', $student->updated_at) : null, false],
@@ -85,7 +85,7 @@ $groups = [
             </div>
         <?php endforeach; ?>
         <?php if (empty($info)): ?>
-            <div class="alert alert-warning mt-4 mb-0"><i class="bx bx-info-circle me-1"></i>دانشپذیر هنوز اطلاعات هویتی (برای صدور مدرک) را تکمیل نکرده است.</div>
+            <div class="alert alert-warning mt-4 mb-0"><i class="bx bx-info-circle me-1"></i>دانشپذیر هنوز اطلاعات هویتی (برای صدور گواهی) را تکمیل نکرده است.</div>
         <?php endif; ?>
     </div>
 </div>

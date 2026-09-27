@@ -10,7 +10,9 @@ use app\components\StudentAccess;
 use app\components\UsersDirectory;
 use yii\helpers\Html;
 use yii\helpers\Url;
+use frontend\assets\InputGuardAsset;
 
+InputGuardAsset::register($this);
 $checkUrl = Url::to(['check_excel_file']);
 $this->registerJs(<<<JS
 $(document).on('click', '.js-edit-user', function () {
@@ -58,11 +60,11 @@ JS
                 <div class="row g-3">
                     <div class="col-md-6">
                         <label for="edit-user-first" class="form-label">نام *</label>
-                        <input type="text" class="form-control" name="Users[first_name]" id="edit-user-first" required maxlength="100">
+                        <input type="text" class="form-control" name="Users[first_name]" id="edit-user-first" required maxlength="100" data-input="fa">
                     </div>
                     <div class="col-md-6">
                         <label for="edit-user-last" class="form-label">نام خانوادگی *</label>
-                        <input type="text" class="form-control" name="Users[last_name]" id="edit-user-last" required maxlength="100">
+                        <input type="text" class="form-control" name="Users[last_name]" id="edit-user-last" required maxlength="100" data-input="fa">
                     </div>
                 </div>
                 <small class="text-muted d-block mt-3">اگر دانشپذیر حساب کلاس آنلاین داشته باشد، نام در آنجا هم به‌روز می‌شود.</small>
@@ -88,7 +90,8 @@ JS
             <div class="modal-body">
                 <input type="hidden" name="Users[_id]" id="password-user-id">
                 <label for="password-user-input" class="form-label">رمز عبور جدید *</label>
-                <input type="text" class="form-control" name="Users[password_hash]" id="password-user-input" required autocomplete="off" dir="ltr">
+                <input type="text" class="form-control" name="Users[password_hash]" id="password-user-input" required minlength="6" maxlength="72" autocomplete="new-password" dir="ltr">
+                <small class="text-muted">حداقل ۶ کاراکتر</small>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">انصراف</button>
@@ -102,7 +105,7 @@ JS
 <?php if (!empty($showAdd)):
     $newColleges = UsersDirectory::collegeNames(StudentAccess::collegesForNewStudent());
     $collegeNote = empty($newColleges)
-        ? 'دانشپذیر بدون دانشکده ثبت می‌شود.'
+        ? 'دانشپذیر بدون واحد ثبت می‌شود.'
         : 'دانشپذیر به صورت خودکار به ' . implode('، ', $newColleges) . ' اضافه می‌شود.';
     ?>
     <!-- افزودن با مشخصات -->
@@ -118,19 +121,19 @@ JS
                     <div class="row g-3">
                         <div class="col-md-6">
                             <label class="form-label" for="new-first">نام *</label>
-                            <input type="text" class="form-control" id="new-first" name="Users[first_name]" required maxlength="100">
+                            <input type="text" class="form-control" id="new-first" name="Users[first_name]" required maxlength="100" data-input="fa">
                         </div>
                         <div class="col-md-6">
                             <label class="form-label" for="new-last">نام خانوادگی *</label>
-                            <input type="text" class="form-control" id="new-last" name="Users[last_name]" required maxlength="100">
+                            <input type="text" class="form-control" id="new-last" name="Users[last_name]" required maxlength="100" data-input="fa">
                         </div>
                         <div class="col-md-6">
                             <label class="form-label" for="new-username">نام کاربری * (موبایل یا ایمیل)</label>
-                            <input type="text" class="form-control" id="new-username" name="Users[username]" required dir="ltr" placeholder="09xxxxxxxxx" autocomplete="off">
+                            <input type="text" class="form-control" id="new-username" name="Users[username]" required dir="ltr" placeholder="09xxxxxxxxx" autocomplete="off" maxlength="100" data-input="mobile-email">
                         </div>
                         <div class="col-md-6">
                             <label class="form-label" for="new-password">رمز عبور *</label>
-                            <input type="text" class="form-control" id="new-password" name="Users[password_hash]" required dir="ltr" autocomplete="off" placeholder="معمولاً کد ملی">
+                            <input type="text" class="form-control" id="new-password" name="Users[password_hash]" required minlength="6" maxlength="72" dir="ltr" autocomplete="new-password" placeholder="معمولاً کد ملی">
                         </div>
                     </div>
                     <div class="alert alert-primary d-flex align-items-center mt-3 mb-0 py-2" role="alert">
@@ -170,7 +173,7 @@ JS
                                 <tr><td>G</td><td>جنسیت: ۱ مرد، ۲ زن</td><td>بله</td></tr>
                                 </tbody>
                             </table>
-                            <small class="text-muted d-block mb-3">ردیف اول عنوان ستون‌هاست. <?= Html::encode($collegeNote) ?> نام‌های کاربری موجود خطا نیستند و به دانشکده‌ی شما اضافه می‌شوند.</small>
+                            <small class="text-muted d-block mb-3">ردیف اول عنوان ستون‌هاست. <?= Html::encode($collegeNote) ?> نام‌های کاربری موجود خطا نیستند و به واحد شما اضافه می‌شوند.</small>
                             <a href="<?= Url::to(['excel_template']) ?>" class="btn btn-sm btn-label-success"><i class="bx bx-download me-1"></i>دانلود فایل نمونه</a>
                         </div>
                         <div class="col-lg-7">
