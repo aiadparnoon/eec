@@ -12,8 +12,9 @@ composer.phar
 # runtime & generated
 /frontend/runtime/*
 /console/runtime/*
-/frontend/web/assets/*
-!/frontend/web/assets/.gitkeep
+# Yii published asset bundles (hashed dirs); theme files in assets/ are tracked
+/frontend/web/assets/[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]/
+__MACOSX/
 
 # personal / uploaded files
 /frontend/protected_folders/
