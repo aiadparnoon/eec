@@ -12,6 +12,7 @@ use app\components\UsersDirectory;
 use app\components\UsersImport;
 use app\components\XlsxWriter;
 use app\components\SecureFile;
+use app\components\SafeRedirect;
 use app\components\classroom\ClassroomPlatforms;
 use common\models\Admin;
 use yii\filters\AccessControl;
@@ -23,7 +24,7 @@ use yii\filters\VerbFilter;
  * مدیریت دانشپذیران (مجموعه‌ی users) — docs/specs/users-manage.md
  *
  * همه‌ی اکشن‌هایی که روی یک دانشپذیر کار می‌کنند، او را از مسیر StudentAccess
- * بارگذاری می‌کنند تا کارشناس فقط به دانشپذیران دانشکده‌ی خودش دسترسی داشته باشد.
+ * بارگذاری می‌کنند تا کارشناس فقط به دانشپذیران واحد خودش دسترسی داشته باشد.
  */
 class UsersManageController extends Controller
 {
@@ -88,7 +89,7 @@ class UsersManageController extends Controller
             'searchModel' => $searchModel,
             'dataProvider' => $dataProvider,
             'students' => $students,
-            'registrants' => UsersDirectory::registrants($registrantUsernames),
+            'registrants' => UsersDirectory::registrants($registrantUsernames) + UsersDirectory::inferSources($students),
             'stats' => UsersSearch::stats(),
             'colleges' => UsersDirectory::selectableColleges(),
             'courses' => $this->selectableCourses(),
@@ -110,7 +111,7 @@ class UsersManageController extends Controller
             ->asArray();
 
         $writer = new XlsxWriter(
-            ['ردیف', 'نام', 'نام خانوادگی', 'نام کاربری', 'کد ملی', 'دانشکده‌ها', 'ثبت کننده', 'نقش ثبت کننده', 'تعداد دوره', 'وضعیت', 'نقش', 'تاریخ ثبت'],
+            ['ردیف', 'نام', 'نام خانوادگی', 'نام کاربری', 'کد ملی', 'واحدها', 'ثبت کننده', 'نقش ثبت کننده', 'تعداد دوره', 'وضعیت', 'نقش', 'تاریخ ثبت'],
             [7, 16, 20, 26, 14, 30, 24, 18, 11, 10, 14, 13]
         );
         $registrants = [];
@@ -127,8 +128,9 @@ class UsersManageController extends Controller
                 foreach (array_keys($missing) as $r)
                     $registrants[$r] = isset($found[$r]) ? $found[$r] : null;
             }
+            $known = array_filter($registrants) + UsersDirectory::inferSources($rows);
             foreach ($rows as $row)
-                $writer->addRow($this->reportRow($row, $writer->rowCount() + 1, array_filter($registrants)));
+                $writer->addRow($this->reportRow($row, $writer->rowCount() + 1, $known));
         }
 
         $path = Yii::getAlias('@runtime') . '/users-export-' . bin2hex(random_bytes(6)) . '.xlsx';
@@ -204,14 +206,16 @@ class UsersManageController extends Controller
 
         if ($firstName === '' || $lastName === '' || $password === '' || !UsersImport::isValidUsername($username))
             return $this->back('error', 'نام، نام خانوادگی، رمز عبور و نام کاربری معتبر (موبایل یا ایمیل) الزامی است');
+        if (($passwordError = UsersImport::passwordError($password)) !== null)
+            return $this->back('error', $passwordError);
 
         $colleges = StudentAccess::collegesForNewStudent();
         $existing = Users::find()->where(['username' => $username])->one();
         if ($existing !== null) {
-            // مانند ورود از اکسل: کاربر موجود خطا نیست؛ دانشکده‌ی کارشناس به او اضافه می‌شود
+            // مانند ورود از اکسل: کاربر موجود خطا نیست؛ واحد کارشناس به او اضافه می‌شود
             if (!empty($colleges) && StudentAccess::addColleges($existing, $colleges)) {
                 if ($existing->save(false, ['college', 'updated_at']))
-                    return $this->back('info', 'این نام کاربری از قبل وجود داشت؛ دانشپذیر به دانشکده‌ی شما اضافه شد', ['profile', 'id' => (string) $existing->_id]);
+                    return $this->back('info', 'این نام کاربری از قبل وجود داشت؛ دانشپذیر به واحد شما اضافه شد', ['profile', 'id' => (string) $existing->_id]);
                 return $this->back('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید');
             }
             return $this->back('warning', 'دانشپذیری با این نام کاربری از قبل وجود دارد');
@@ -227,8 +231,9 @@ class UsersManageController extends Controller
         $model->role = 'user';
         $model->status = Users::STATUS_ACTIVE;
         $model->registrant = (string) Yii::$app->user->identity->username;
-        // ثبت توسط کارشناس: دانشکده‌ی او به آرایه‌ی college اضافه می‌شود تا دسترسی داشته باشد؛
-        // ثبت توسط مدیر: آرایه‌ی خالی (بدون دانشکده). فرم، دانشکده نمی‌پرسد.
+        $model->must_change_password = true; // رمز اولیه را کارکنان تعیین کرده‌اند (بند ۱.۳ صورتجلسه)
+        // ثبت توسط کارشناس: واحد او به آرایه‌ی college اضافه می‌شود تا دسترسی داشته باشد؛
+        // ثبت توسط مدیر: آرایه‌ی خالی (بدون واحد). فرم، واحد نمی‌پرسد.
         $model->college = [];
         StudentAccess::addColleges($model, $colleges);
         if ($model->save())
@@ -304,7 +309,7 @@ class UsersManageController extends Controller
         return $this->render('profile', [
             'student' => $student,
             'profile' => $profile,
-            'registrant' => UsersDirectory::describeRegistrant($student, UsersDirectory::registrants([$student->registrant])),
+            'registrant' => UsersDirectory::describeRegistrant($student, UsersDirectory::registrants([$student->registrant]) + UsersDirectory::inferSources([$student])),
         ]);
     }
 
@@ -321,7 +326,7 @@ class UsersManageController extends Controller
         return $this->renderPartial('profile/_tab-' . $tab, [
             'student' => $student,
             'profile' => $profile,
-            'registrants' => UsersDirectory::registrants(array_merge(
+            'registrants' => UsersDirectory::inferSources([$student]) + UsersDirectory::registrants(array_merge(
                 [$student->registrant],
                 array_map(function ($c) {
                     return isset($c['item']['registrant']) && is_scalar($c['item']['registrant']) ? (string) $c['item']['registrant'] : '';
@@ -343,7 +348,17 @@ class UsersManageController extends Controller
         $path = $filename === '' ? null : SecureFile::resolve(Yii::getAlias('@frontend/web/certificate_files'), $filename);
         if ($path === null)
             throw new NotFoundHttpException('فایل مورد نظر پیدا نشد.');
-        return Yii::$app->response->sendFile($path, basename($path), ['inline' => (bool) $inline]);
+        // نمایش درون مرورگر فقط برای تصویر؛ هر نوع دیگری دانلود می‌شود و مرورگر اجازه‌ی حدس نوع/اجرای اسکریپت ندارد
+        $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        $images = ['jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'png' => 'image/png', 'gif' => 'image/gif', 'webp' => 'image/webp'];
+        $isImage = isset($images[$ext]);
+        $headers = Yii::$app->response->headers;
+        $headers->set('X-Content-Type-Options', 'nosniff');
+        $headers->set('Content-Security-Policy', "default-src 'none'; img-src 'self'; sandbox");
+        return Yii::$app->response->sendFile($path, 'document-' . $type . '.' . $ext, [
+            'inline' => $isImage && (bool) $inline,
+            'mimeType' => $isImage ? $images[$ext] : ($ext === 'pdf' ? 'application/pdf' : 'application/octet-stream'),
+        ]);
     }
 
     // ================================================================== تغییرات
@@ -442,8 +457,11 @@ class UsersManageController extends Controller
         $password = is_array($input) && isset($input['password_hash']) ? (string) $input['password_hash'] : '';
         if ($password === '')
             return $this->back('error', 'رمز عبور جدید وارد نشده است');
+        if (($passwordError = UsersImport::passwordError($password)) !== null)
+            return $this->back('error', $passwordError);
         $user->password_hash = Yii::$app->security->generatePasswordHash($password);
-        if (!$user->save(false, ['password_hash', 'updated_at']))
+        $user->must_change_password = true; // رمزی که کارکنان تعیین کرده‌اند موقت است
+        if (!$user->save(false, ['password_hash', 'must_change_password', 'updated_at']))
             return $this->back('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید');
         // حساب مدرس (mentor) با همین نام کاربری هم هم‌زمان تغییر می‌کند
         $teacher = Admin::find()->where(['username' => $user->username])->andWhere(['mentor' => true])->one();
@@ -464,8 +482,7 @@ class UsersManageController extends Controller
         Yii::$app->session->setFlash(self::FLASH, ['type' => $type, 'message' => $message]);
         if ($url !== null)
             return $this->redirect($url);
-        $referrer = Yii::$app->request->referrer;
-        return $this->redirect($referrer ?: ['index']);
+        return $this->redirect(SafeRedirect::referrer(['index']));
     }
 
     private function findStudentOr404($id)

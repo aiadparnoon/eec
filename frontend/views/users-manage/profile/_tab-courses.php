@@ -1,7 +1,7 @@
 <?php
 /**
  * تب «دوره‌ها»: برای هر دوره یک کارت بازشونده با وضعیت، کلاس آنلاین، حضور و غیاب،
- * مدرک، وضعیت مالی و آزمون/تمرین/نظرسنجی.
+ * گواهی، وضعیت مالی و آزمون/تمرین/نظرسنجی.
  *
  * @var $this yii\web\View
  * @var $student app\models\Users
@@ -72,7 +72,7 @@ $collegeTitles = UsersDirectory::collegeTitles();
                 <div class="alert alert-warning mb-0">اطلاعات این دوره در سامانه پیدا نشد (ممکن است حذف شده باشد).</div>
             <?php else: ?>
                 <ul class="nav nav-tabs nav-fill mb-3" role="tablist">
-                    <?php foreach (['status' => 'وضعیت و کلاس', 'attendance' => 'حضور و غیاب', 'certificate' => 'مدرک', 'finance' => 'مالی', 'exams' => 'آزمون و تمرین'] as $key => $label): ?>
+                    <?php foreach (['status' => 'وضعیت و کلاس', 'attendance' => 'حضور و غیاب', 'certificate' => 'گواهی', 'finance' => 'مالی', 'exams' => 'آزمون و تمرین'] as $key => $label): ?>
                         <li class="nav-item" role="presentation">
                             <button type="button" class="nav-link <?= $key === 'status' ? 'active' : '' ?>" data-bs-toggle="tab" data-bs-target="#<?= $uid ?>-<?= $key ?>" role="tab"><?= Html::encode($label) ?></button>
                         </li>
@@ -105,7 +105,7 @@ $collegeTitles = UsersDirectory::collegeTitles();
                                         <small class="text-muted d-block mt-2">ثبت‌نام توسط: <?= Html::encode($registrantInfo['name']) ?><?= $registrantInfo['roleLabel'] !== '' ? ' (' . Html::encode($registrantInfo['roleLabel']) . ')' : '' ?></small>
                                     <?php endif; ?>
                                     <?php if (!$canManage): ?>
-                                        <small class="text-muted d-block mt-2"><i class="bx bx-lock-alt"></i> این دوره متعلق به دانشکده‌ی دیگری است و فقط قابل مشاهده است.</small>
+                                        <small class="text-muted d-block mt-2"><i class="bx bx-lock-alt"></i> این دوره متعلق به واحد دیگری است و فقط قابل مشاهده است.</small>
                                     <?php endif; ?>
                                 </div>
                             </div>
@@ -191,22 +191,22 @@ $collegeTitles = UsersDirectory::collegeTitles();
                         <?php endif; ?>
                     </div>
 
-                    <!-- مدرک -->
+                    <!-- گواهی -->
                     <div class="tab-pane fade" id="<?= $uid ?>-certificate" role="tabpanel">
                         <?php $certificate = $profile->certificate($courseId); ?>
                         <div class="d-flex flex-wrap justify-content-between align-items-start gap-3">
                             <?php if ($certificate === null): ?>
-                                <div class="text-muted">درخواست صدور مدرکی برای این دوره ثبت نشده است.</div>
+                                <div class="text-muted">درخواست صدور گواهی‌ای برای این دوره ثبت نشده است.</div>
                             <?php else:
                                 list($certLabel, $certColor) = StudentProfile::certificateStatus($certificate->status); ?>
                                 <div class="row g-3 flex-grow-1">
                                     <div class="col-sm-4"><small class="text-muted d-block">وضعیت درخواست</small><span class="badge bg-label-<?= $certColor ?>"><?= Html::encode($certLabel) ?></span></div>
                                     <div class="col-sm-4"><small class="text-muted d-block">تاریخ درخواست</small><span class="fw-semibold"><?= Html::encode(is_scalar($certificate->request) && $certificate->request !== '' ? $certificate->request : UsersDirectory::jdate('Y/m/d', hexdec(substr((string) $certificate->_id, 0, 8)))) ?></span></div>
-                                    <div class="col-sm-4"><small class="text-muted d-block">شماره سریال مدرک</small><span class="fw-semibold" dir="ltr"><?= Html::encode($certificate->serial_number ?: '—') ?></span></div>
+                                    <div class="col-sm-4"><small class="text-muted d-block">شماره سریال گواهی</small><span class="fw-semibold" dir="ltr"><?= Html::encode($certificate->serial_number ?: '—') ?></span></div>
                                 </div>
                             <?php endif; ?>
-                            <button type="button" class="btn btn-sm btn-outline-secondary" disabled title="وب‌سرویس صدور مدرک دیجیتال هنوز آماده نیست">
-                                <i class="bx bx-certification me-1"></i>صدور مدرک دیجیتال <span class="badge bg-label-secondary ms-1">به‌زودی</span>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" disabled title="وب‌سرویس صدور گواهی دیجیتال هنوز آماده نیست">
+                                <i class="bx bx-certification me-1"></i>صدور گواهی دیجیتال <span class="badge bg-label-secondary ms-1">به‌زودی</span>
                             </button>
                         </div>
                     </div>

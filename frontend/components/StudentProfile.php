@@ -169,7 +169,7 @@ class StudentProfile
     }
 
     /**
-     * سهم دانشکده و کارگزار از یک سفارش (بر اساس shares[0]).
+     * سهم واحد و کارگزار از یک سفارش (بر اساس shares[0]).
      *
      * @return array ['college' => مبلغ, 'broker' => مبلغ, 'percent' => درصد کارگزار, 'brokerName' => ...]
      */
@@ -257,7 +257,7 @@ class StudentProfile
         return $count;
     }
 
-    // ------------------------------------------------------------------ مدرک
+    // ------------------------------------------------------------------ گواهی
 
     /** @return CertificateRequests|null */
     public function certificate($courseId)
@@ -273,11 +273,11 @@ class StudentProfile
     public static function certificateStatus($status)
     {
         $labels = [
-            '1' => ['در انتظار بررسی دانشکده', 'warning'],
-            '2' => ['تائید دانشکده، در انتظار صدور', 'info'],
-            '3' => ['رد دانشکده', 'danger'],
+            '1' => ['در انتظار بررسی واحد', 'warning'],
+            '2' => ['تائید واحد، در انتظار صدور', 'info'],
+            '3' => ['رد واحد', 'danger'],
             '4' => ['صادر شده', 'success'],
-            '5' => ['رد صدور مدرک', 'danger'],
+            '5' => ['رد صدور گواهی', 'danger'],
         ];
         return isset($labels[(string) $status]) ? $labels[(string) $status] : ['نامشخص', 'secondary'];
     }
