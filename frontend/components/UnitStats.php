@@ -16,8 +16,8 @@ class UnitStats
         'teachers' => 'استاد',
         'courses' => 'دوره',
         'activeCourses' => 'دوره فعال',
-        'certificates' => 'مدرک صادرشده',
-        'pendingCertificates' => 'درخواست مدرک در انتظار',
+        'certificates' => 'گواهی صادرشده',
+        'pendingCertificates' => 'درخواست گواهی در انتظار',
         'brokers' => 'کارگزار',
         'activeBrokers' => 'کارگزار فعال',
     ];

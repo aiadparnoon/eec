@@ -17,8 +17,10 @@ use yii\helpers\Html;
 use yii\helpers\Json;
 use yii\helpers\Url;
 use yii\widgets\LinkPager;
+use frontend\assets\InputGuardAsset;
 
 $this->title = 'مدیریت واحدها';
+InputGuardAsset::register($this);
 $fa = function ($n) {
     return UsersImport::faDigits(number_format((int) $n));
 };
@@ -33,7 +35,7 @@ $offset = $pagination ? $pagination->getOffset() : 0;
 $flash = Yii::$app->session->getFlash(CollagesManageController::FLASH);
 if (is_array($flash) && isset($flash['message'])) {
     $type = in_array($flash['type'], ['success', 'error', 'warning', 'info'], true) ? $flash['type'] : 'info';
-    $this->registerJs("toastr['$type'](" . Json::htmlEncode($flash['message']) . ", '', {positionClass: 'toast-top-center', closeButton: true, timeOut: 7000});");
+    $this->registerJs("toastr['$type'](" . Json::htmlEncode($flash['message']) . ", '', {positionClass: 'toast-top-center', closeButton: true, timeOut: 7000, escapeHtml: true});");
 }
 
 $accountLength = Colleges::ACCOUNT_ID_LENGTH;
@@ -99,18 +101,27 @@ $fields = function ($prefix, $isNew) use ($isAdmin, $accountLength) {
     <h6 class="text-muted small mb-2">مشخصات واحد</h6>
     <div class="row g-3 mb-4">
         <?= $text('title', 'عنوان واحد', ['required' => true, 'maxlength' => 150]) ?>
-        <?= $text('prefix', 'کد مجوز', ['required' => true, 'maxlength' => 50, 'dir' => 'ltr']) ?>
-        <?= $text('title_en', 'Title (English)', ['dir' => 'ltr', 'maxlength' => 150]) ?>
-        <?= $text('phone', 'شماره تماس', ['dir' => 'ltr', 'maxlength' => 20, 'inputmode' => 'tel']) ?>
+        <div class="col-md-6">
+            <label class="form-label" for="<?= $prefix ?>-code">کد واحد (کد مجوز)</label>
+            <?php if ($isNew): ?>
+                <input type="text" class="form-control" id="<?= $prefix ?>-code" value="تولید خودکار پس از ثبت" disabled>
+                <small class="text-muted">توسط سامانه به‌صورت یکتا تولید می‌شود.</small>
+            <?php else: ?>
+                <input type="text" class="form-control" id="<?= $prefix ?>-code" data-display="prefix" disabled dir="ltr">
+                <small class="text-muted">کد مجوز دوره‌ها بر اساس این کد ساخته شده و قابل تغییر نیست.</small>
+            <?php endif; ?>
+        </div>
+        <?= $text('title_en', 'Title (English)', ['dir' => 'ltr', 'maxlength' => 150, 'data-input' => 'en']) ?>
+        <?= $text('phone', 'شماره تماس', ['dir' => 'ltr', 'maxlength' => 20, 'inputmode' => 'tel', 'data-input' => 'phone']) ?>
     </div>
-    <h6 class="text-muted small mb-2">امضای مدرک</h6>
+    <h6 class="text-muted small mb-2">امضای گواهی</h6>
     <div class="row g-3 mb-4">
         <?= $text('first_line_signature_fa', 'امضا خط اول') ?>
         <?= $text('second_line_signature_fa', 'امضا خط دوم') ?>
-        <?= $text('name', 'Name', ['dir' => 'ltr']) ?>
-        <?= $text('last_name', 'Last Name', ['dir' => 'ltr']) ?>
-        <?= $text('first_line_signature_en', 'First Signature', ['dir' => 'ltr']) ?>
-        <?= $text('second_line_signature_en', 'Second Signature', ['dir' => 'ltr']) ?>
+        <?= $text('name', 'Name', ['dir' => 'ltr', 'data-input' => 'en']) ?>
+        <?= $text('last_name', 'Last Name', ['dir' => 'ltr', 'data-input' => 'en']) ?>
+        <?= $text('first_line_signature_en', 'First Signature', ['dir' => 'ltr', 'data-input' => 'en']) ?>
+        <?= $text('second_line_signature_en', 'Second Signature', ['dir' => 'ltr', 'data-input' => 'en']) ?>
     </div>
     <h6 class="text-muted small mb-2">اطلاعات مالی</h6>
     <div class="row g-3 mb-4">
@@ -173,7 +184,7 @@ $fields = function ($prefix, $isNew) use ($isAdmin, $accountLength) {
             ['کارمند واحد', $total['staff'], 'bx-id-card', 'secondary', null],
             ['استاد', $total['teachers'], 'bx-chalkboard', 'warning', null],
             ['دوره', $total['courses'], 'bx-book-open', 'success', $fa($total['activeCourses']) . ' دوره فعال'],
-            ['مدرک صادرشده', $total['certificates'], 'bx-award', 'danger', $fa($total['pendingCertificates']) . ' درخواست در انتظار'],
+            ['گواهی صادرشده', $total['certificates'], 'bx-award', 'danger', $fa($total['pendingCertificates']) . ' درخواست در انتظار'],
             ['کارگزار', $total['brokers'], 'bx-briefcase', 'dark', $fa($total['activeBrokers']) . ' کارگزار فعال'],
         ];
         foreach ($cards as $card): ?>
@@ -208,7 +219,7 @@ $fields = function ($prefix, $isNew) use ($isAdmin, $accountLength) {
                     <th class="text-center">کارمندان</th>
                     <th class="text-center">اساتید</th>
                     <th class="text-center">دوره‌ها<small class="d-block text-muted">فعال / کل</small></th>
-                    <th class="text-center">مدارک صادرشده</th>
+                    <th class="text-center">گواهی‌های صادرشده</th>
                     <th class="text-center">کارگزاران<small class="d-block text-muted">فعال / کل</small></th>
                     <th class="text-center">عملیات</th>
                 </tr>
@@ -244,7 +255,7 @@ $fields = function ($prefix, $isNew) use ($isAdmin, $accountLength) {
                                 <div class="d-flex flex-column">
                                     <span class="fw-semibold"><?= Html::encode($unit->title) ?></span>
                                     <small class="text-muted">
-                                        کد مجوز: <span dir="ltr"><?= Html::encode($unit->prefix ?: '—') ?></span>
+                                        کد واحد: <span dir="ltr"><?= Html::encode($unit->prefix ?: '—') ?></span>
                                         <?php if (!$accountOk): ?><span class="badge bg-label-warning ms-1" title="شناسه‌ی حساب باید ۳۰ رقم باشد">شناسه حساب ناقص</span><?php endif; ?>
                                     </small>
                                 </div>

@@ -105,8 +105,31 @@ class Colleges extends \yii\mongodb\ActiveRecord
                 'pattern' => "/^[A-Za-z0-9 .,'&()\\-]*$/", 'message' => '«{attribute}» فقط باید با حروف انگلیسی نوشته شود', 'on' => self::SCENARIO_MANAGE],
             [['phone'], 'match', 'pattern' => '/^[0-9+\\- ]{0,20}$/', 'message' => 'شماره تماس معتبر نیست', 'on' => self::SCENARIO_MANAGE],
             [['title'], 'validateUniqueTitle', 'on' => self::SCENARIO_MANAGE],
+            [['prefix'], 'validateUniquePrefix', 'on' => self::SCENARIO_MANAGE],
             [['financial_info'], 'validateFinancialInfo', 'on' => self::SCENARIO_MANAGE],
         ];
+    }
+
+    /**
+     * کد واحد (پیشوند کد مجوز دوره‌ها) را به‌صورت خودکار و یکتا تولید می‌کند (بند ۴.۱ صورتجلسه).
+     * شمارنده‌ی اتمیک در generals (type = unit_code) است تا دو ثبت هم‌زمان کد یکسان نگیرند؛
+     * اگر عددی قبلاً به‌صورت دستی استفاده شده باشد، از آن رد می‌شود.
+     */
+    public static function generateUnitCode()
+    {
+        $counters = Yii::$app->mongodb->getCollection(['eec', 'generals']);
+        for ($i = 0; $i < 1000; $i++) {
+            $doc = $counters->findAndModify(['type' => 'unit_code'], ['$inc' => ['data' => 1]], ['new' => true, 'upsert' => true]);
+            $number = isset($doc['data']) ? (int) $doc['data'] : 0;
+            if ($number < 101) { // کدهای سه‌رقمی از ۱۰۱
+                $counters->update(['type' => 'unit_code'], ['$set' => ['data' => 100]]);
+                continue;
+            }
+            $code = (string) $number;
+            if (!self::find()->where(['prefix' => $code])->exists())
+                return $code;
+        }
+        throw new \RuntimeException('Cannot generate a unique unit code');
     }
 
     /**
@@ -146,6 +169,15 @@ class Colleges extends \yii\mongodb\ActiveRecord
     /**
      * عنوان واحد تکراری نباشد (بدون حساسیت به فاصله‌های اضافه).
      */
+    public function validateUniquePrefix($attribute)
+    {
+        $query = self::find()->where(['prefix' => $this->prefix]);
+        if (!$this->getIsNewRecord())
+            $query->andWhere(['_id' => ['$ne' => $this->_id]]);
+        if ($query->exists())
+            $this->addError($attribute, 'کد واحد تکراری است');
+    }
+
     public function validateUniqueTitle($attribute)
     {
         $query = self::find()->where(['title' => $this->title]);

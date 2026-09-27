@@ -8,6 +8,7 @@ use app\models\CollegesSearch;
 use app\models\Courses;
 use app\models\Users;
 use app\models\UsersSearch;
+use app\components\SafeRedirect;
 use app\components\SecureUpload;
 use app\components\StudentAccess;
 use app\components\StudentProfile;
@@ -98,7 +99,9 @@ class CollagesManageController extends Controller
         $model = new Colleges(['scenario' => Colleges::SCENARIO_MANAGE]);
         $this->assign($model, true);
         $model->status = '1';
-        if (!$model->validate())
+        // کد واحد خودکار و یکتا؛ از فرم پذیرفته نمی‌شود و فقط بعد از اعتبارسنجی موفق تولید می‌شود
+        // تا تلاش‌های ناموفق شماره‌ای مصرف نکنند
+        if (!$model->validate(array_diff($model->activeAttributes(), ['prefix'])))
             return $this->back('error', $this->firstError($model));
 
         $logo = UploadedFile::getInstance($model, 'logo');
@@ -119,8 +122,9 @@ class CollagesManageController extends Controller
             $model->signature_file = $signatureName;
         }
 
+        $model->prefix = Colleges::generateUnitCode();
         if ($model->save(false))
-            return $this->back('success', 'واحد «' . $model->title . '» ثبت شد');
+            return $this->back('success', 'واحد «' . $model->title . '» با کد ' . $model->prefix . ' ثبت شد');
         SecureUpload::delete(self::LOGO_DIR, $model->logo);
         SecureUpload::delete(self::LOGO_DIR, $model->signature_file);
         return $this->back('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید');
@@ -137,6 +141,8 @@ class CollagesManageController extends Controller
         $model->scenario = Colleges::SCENARIO_MANAGE;
         $isAdmin = StudentAccess::isAdmin();
         $this->assign($model, $isAdmin);
+        if (!is_scalar($model->prefix) || trim((string) $model->prefix) === '')
+            $model->prefix = Colleges::generateUnitCode(); // واحد قدیمی بدون کد
         if (!$model->validate())
             return $this->back('error', $this->firstError($model));
 
@@ -243,7 +249,9 @@ class CollagesManageController extends Controller
     {
         $input = Yii::$app->request->post('Colleges');
         $input = is_array($input) ? $input : [];
-        foreach (['title', 'prefix', 'first_line_signature_fa', 'second_line_signature_fa', 'title_en', 'name', 'last_name',
+        // prefix (کد واحد) عمداً اینجا نیست: هنگام ثبت خودکار تولید می‌شود و بعد از آن ثابت می‌ماند،
+        // چون کد مجوز همه‌ی دوره‌های واحد با آن ساخته شده است
+        foreach (['title', 'first_line_signature_fa', 'second_line_signature_fa', 'title_en', 'name', 'last_name',
                      'first_line_signature_en', 'second_line_signature_en', 'phone'] as $field)
             $model->$field = isset($input[$field]) && is_scalar($input[$field]) ? (string) $input[$field] : '';
         if ($withFinancial) {
@@ -287,6 +295,6 @@ class CollagesManageController extends Controller
     private function back($type, $message)
     {
         Yii::$app->session->setFlash(self::FLASH, ['type' => $type, 'message' => $message]);
-        return $this->redirect(Yii::$app->request->referrer ?: ['index']);
+        return $this->redirect(SafeRedirect::referrer(['index']));
     }
 }
