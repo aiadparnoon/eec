@@ -60,8 +60,8 @@ class StudentAccess
 
         if ($identity->role == 'emp') {
             // شرط in (همان $in مونگو) روی فیلد رشته‌ای و آرایه‌ای هر دو درست کار می‌کند.
-            // موقت: کاربرانی که خود کارشناس ثبت کرده ولی هنوز دانشکده ندارند (تا بند ۴
-            // که هنگام افزودن، دانشکده را ثبت می‌کند) هم نمایش داده می‌شوند.
+            // موقت: کاربران قدیمی که خود کارشناس ثبت کرده ولی college ندارند هم نمایش داده
+            // می‌شوند (کاربران جدید هنگام ثبت، دانشکده‌ی کارشناس را می‌گیرند).
             $colleges = self::staffColleges($identity);
             $conditions = ['or', ['registrant' => (string) $identity->username]];
             if (!empty($colleges))
@@ -115,6 +115,40 @@ class StudentAccess
             return null;
         $student = Users::findOne($id);
         return self::canManage($student) ? $student : null;
+    }
+
+    /**
+     * دانشکده‌هایی که هنگام ثبت دانشپذیر توسط کاربر جاری باید به users.college اضافه شوند.
+     *  - مدیر سیستم (user/cnt): هیچ دانشکده‌ای (دانشپذیر عمومی است).
+     *  - کارشناس دانشکده (emp): دانشکده‌(های) خود کارشناس؛ فرم ثبت دیگر دانشکده نمی‌پرسد.
+     *  - سایر نقش‌ها (از جمله کارگزار تا تصمیم بند ۱.۳): هیچ.
+     *
+     * @return string[]
+     */
+    public static function collegesForNewStudent($identity = null)
+    {
+        $identity = $identity ?: Yii::$app->user->identity;
+        if ($identity === null || self::isAdmin($identity) || $identity->role != 'emp')
+            return [];
+        return self::staffColleges($identity);
+    }
+
+    /**
+     * دانشکده‌ها را (بدون تکرار) به آرایه‌ی users.college اضافه می‌کند؛ مقدار رشته‌ای قدیمی
+     * هم به آرایه تبدیل می‌شود. ذخیره با فراخواننده است.
+     *
+     * @param Users $student
+     * @param string[] $colleges
+     * @return bool آیا مقدار تغییر کرد
+     */
+    public static function addColleges($student, array $colleges)
+    {
+        $current = self::normalizeColleges($student->college);
+        $merged = self::normalizeColleges(array_merge($current, $colleges));
+        if ($merged === $current && is_array($student->college))
+            return false;
+        $student->college = $merged;
+        return true;
     }
 
     /**

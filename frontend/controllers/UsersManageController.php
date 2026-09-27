@@ -164,6 +164,10 @@ class UsersManageController extends Controller
                 $model->role = 'user';
                 $model->status = 10;
                 $model->registrant = Yii::$app->user->identity->username;
+                // ثبت توسط کارشناس: دانشکده‌ی او به آرایه‌ی college اضافه می‌شود تا دسترسی داشته باشد؛
+                // ثبت توسط مدیر: آرایه‌ی خالی (بدون دانشکده)
+                $model->college = [];
+                StudentAccess::addColleges($model, StudentAccess::collegesForNewStudent());
                 if( $model->save())
                     Yii::$app->session->setFlash('status','1');
                 else
