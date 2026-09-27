@@ -26,6 +26,7 @@ use app\models\CoursesFinancial;
 use app\models\OrganizationPayments;
 use app\models\WalletTransactions;
 use app\models\CancelingRequests;
+use app\components\StudentAccess;
 use yii\filters\AccessControl;
 use yii\helpers\ArrayHelper;
 use yii\helpers\Html;
@@ -1818,7 +1819,8 @@ class PackagesController extends Controller
                 $model->verification_token = Yii::$app->security->generateRandomString();
                 $model->getAuthKey();
                 $model->role = 'user';
-                $model->college = $course->college;
+                // users.college آرایه است (docs/specs/users-manage.md بند ۲)
+                $model->college = StudentAccess::normalizeColleges($course->college);
                 $model->status = 10;
                 $model->courses = array(
                     '0' => array(
@@ -1893,6 +1895,8 @@ class PackagesController extends Controller
                         $find->courses = $courses;
                     }
                 }
+                // دانشکده‌ی دوره به دانشکده‌های کاربر اضافه می‌شود (جایگزین نمی‌شود)
+                StudentAccess::addColleges($find, StudentAccess::normalizeColleges($course->college));
                 if($find->save())
                 {
                     if($flag)
@@ -2047,6 +2051,7 @@ class PackagesController extends Controller
                        array_push($courses, $newCourse);
                    }
                    $user->courses = $courses;
+                   StudentAccess::addColleges($user, StudentAccess::normalizeColleges($course->college));
                    if($user->save())
                    {
                        // Call AdobeConnect For Create Meetings Course
@@ -2401,6 +2406,7 @@ class PackagesController extends Controller
                                             $issuance_certificate_information->gender = $gender;
                                         }
                                         $user->issuance_certificate_information = $issuance_certificate_information;
+                                        StudentAccess::addColleges($user, StudentAccess::normalizeColleges($course->college));
                                         $user->save();
                                     }
                                     else
@@ -2416,7 +2422,8 @@ class PackagesController extends Controller
                                             $model->verification_token = Yii::$app->security->generateRandomString();
                                             $model->getAuthKey();
                                             $model->role = 'user';
-                                            $model->college = $course->college;
+                                            // users.college آرایه است (docs/specs/users-manage.md بند ۲)
+                                            $model->college = StudentAccess::normalizeColleges($course->college);
                                             $model->status = 10;
                                             $model->courses = array(
                                                 '0' => array(

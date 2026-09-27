@@ -38,6 +38,7 @@ class Installments extends \yii\mongodb\ActiveRecord
             'order_id',
             'status',
             'maturities',
+            'is_cheque',
             'createdAt',
             'updatedAt',
         ];
@@ -59,6 +60,7 @@ class Installments extends \yii\mongodb\ActiveRecord
                 'order_id',
                 'status',
                 'maturities',
+                'is_cheque',
                 'createdAt',
                 'updatedAt',
             ], 'safe'],

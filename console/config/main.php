@@ -16,6 +16,11 @@ return [
         '@npm'   => '@vendor/npm-asset',
     ],
     'controllerMap' => [
+        // مهاجرت‌های MongoDB: php yii mongodb-migrate
+        'mongodb-migrate' => [
+            'class' => 'yii\mongodb\console\controllers\MigrateController',
+            'migrationPath' => '@console/migrations/mongodb',
+        ],
         'fixture' => [
             'class' => 'yii\console\controllers\FixtureController',
             'namespace' => 'common\fixtures',

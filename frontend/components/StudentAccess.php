@@ -104,6 +104,26 @@ class StudentAccess
     }
 
     /**
+     * آیا کاربر جاری می‌تواند وضعیت دانشپذیر را در این دوره تغییر دهد.
+     * کارشناس فقط در دوره‌های دانشکده‌ی خودش؛ دوره‌های دانشکده‌های دیگر فقط نمایش داده می‌شوند.
+     *
+     * @param \app\models\Courses|null $course
+     * @return bool
+     */
+    public static function canManageCourse($course, $identity = null)
+    {
+        $identity = $identity ?: Yii::$app->user->identity;
+        if ($course === null || $identity === null)
+            return false;
+        if (self::isAdmin($identity))
+            return true;
+        if ($identity->role == 'emp')
+            return count(array_intersect(self::normalizeColleges($course->college), self::staffColleges($identity))) > 0;
+        // کارگزار: تا تصمیم بند ۱.۳ همان رفتار قبلی (بدون محدودیت دوره)
+        return true;
+    }
+
+    /**
      * دانشپذیر با _id داده‌شده را فقط در صورت داشتن دسترسی برمی‌گرداند.
      *
      * @param mixed $id
@@ -139,16 +159,15 @@ class StudentAccess
      *
      * @param Users $student
      * @param string[] $colleges
-     * @return bool آیا مقدار تغییر کرد
+     * @return bool آیا دانشکده‌ی جدیدی اضافه شد
      */
     public static function addColleges($student, array $colleges)
     {
         $current = self::normalizeColleges($student->college);
         $merged = self::normalizeColleges(array_merge($current, $colleges));
-        if ($merged === $current && is_array($student->college))
-            return false;
+        // مقدار رشته‌ای قدیمی همیشه به آرایه تبدیل می‌شود، ولی «تغییر» فقط یعنی عضویت جدید
         $student->college = $merged;
-        return true;
+        return $merged !== $current;
     }
 
     /**
