@@ -19,6 +19,12 @@ $config = yii\helpers\ArrayHelper::merge(
     require __DIR__ . '/console/config/main-local.php'
 );
 
+// common/config/main.php تنظیمات مخصوص وب (homeUrl، request، urlManager، ...) دارد که
+// اپلیکیشن کنسول را از کار می‌اندازد؛ برای کنسول حذفشان می‌کنیم.
+unset($config['homeUrl'], $config['modules']['gridview']);
+foreach (['request', 'urlManager', 'assetManager', 'as beforeRequest'] as $webOnly)
+    unset($config['components'][$webOnly]);
+
 $application = new yii\console\Application($config);
 $exitCode = $application->run();
 exit($exitCode);

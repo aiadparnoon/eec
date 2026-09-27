@@ -5,46 +5,51 @@ namespace frontend\controllers;
 use Yii;
 use app\models\Users;
 use app\models\UsersSearch;
-use app\models\Colleges;
 use app\models\Courses;
+use app\components\StudentAccess;
+use app\components\StudentProfile;
+use app\components\UsersDirectory;
+use app\components\UsersImport;
+use app\components\XlsxWriter;
+use app\components\SecureFile;
+use app\components\SafeRedirect;
+use app\components\classroom\ClassroomPlatforms;
 use common\models\Admin;
 use yii\filters\AccessControl;
-use yii\helpers\ArrayHelper;
 use yii\web\Controller;
 use yii\web\NotFoundHttpException;
 use yii\filters\VerbFilter;
-use yii\web\UploadedFile;
-use yii\widgets\ActiveForm;
-use yii2tech\spreadsheet\Spreadsheet;
-use PHPExcel_IOFactory;
+
 /**
- * UsersManageController implements the CRUD actions for Users model.
+ * مدیریت دانشپذیران (مجموعه‌ی users) — docs/specs/users-manage.md
+ *
+ * همه‌ی اکشن‌هایی که روی یک دانشپذیر کار می‌کنند، او را از مسیر StudentAccess
+ * بارگذاری می‌کنند تا کارشناس فقط به دانشپذیران واحد خودش دسترسی داشته باشد.
  */
 class UsersManageController extends Controller
 {
-    /**
-     * {@inheritdoc}
-     */
+    const FLASH = 'users-manage';
+
     public function behaviors()
     {
         return [
             'access' => [
                 'class' => AccessControl::className(),
-
                 'rules' => [
                     [
                         'allow' => false,
                         'roles' => ['?'],
                     ],
                     [
-                        'actions' => ['index', 'change_status', 'change_user_course_status', 'report' ,'new', 'edit','new_user','check_excel_file','add_user_from_exel','edit_user','change_password'],
+                        'actions' => ['index', 'report', 'profile', 'profile_tab', 'document', 'new_user', 'excel_template',
+                            'check_excel_file', 'add_user_from_excel', 'change_status', 'change_user_course_status',
+                            'reregister_course', 'edit_user', 'change_password'],
                         'allow' => true,
                         'roles' => ['@'],
                         'matchCallback' => function ($rule, $action) {
-                            if (array_search(Yii::$app->controller->id, Yii::$app->user->identity->access) !== false || Yii::$app->user->identity->role == 'user' || Yii::$app->user->identity->role == 'broker')
-                                return true;
-                            else
-                                return false;
+                            $identity = Yii::$app->user->identity;
+                            return (is_array($identity->access) && array_search(Yii::$app->controller->id, $identity->access) !== false)
+                                || $identity->role == 'user' || $identity->role == 'broker';
                         }
                     ],
                 ],
@@ -55,409 +60,468 @@ class UsersManageController extends Controller
             'verbs' => [
                 'class' => VerbFilter::className(),
                 'actions' => [
-                    'logout' => ['post'],
+                    'new_user' => ['post'],
+                    'check_excel_file' => ['post'],
+                    'add_user_from_excel' => ['post'],
+                    'change_status' => ['post'],
+                    'change_user_course_status' => ['post'],
+                    'reregister_course' => ['post'],
+                    'edit_user' => ['post'],
+                    'change_password' => ['post'],
                 ],
             ],
         ];
     }
 
-    /**
-     * Lists all Lessons models.
-     * @return mixed
-     */
+    // ================================================================== فهرست
+
     public function actionIndex()
     {
         $searchModel = new UsersSearch();
         $dataProvider = $searchModel->search(Yii::$app->request->queryParams);
-        $dataProvider->pagination->pageSize = 50;
+        $students = $dataProvider->getModels();
+
+        $registrantUsernames = [];
+        foreach ($students as $student)
+            $registrantUsernames[] = $student->registrant;
+
         return $this->render('index', [
             'searchModel' => $searchModel,
             'dataProvider' => $dataProvider,
+            'students' => $students,
+            'registrants' => UsersDirectory::registrants($registrantUsernames) + UsersDirectory::inferSources($students),
+            'stats' => UsersSearch::stats(),
+            'colleges' => UsersDirectory::selectableColleges(),
+            'courses' => $this->selectableCourses(),
         ]);
     }
 
+    /**
+     * خروجی اکسل: دقیقاً همان دانشپذیرانی که با فیلترهای فعلی در فهرست دیده می‌شوند
+     * (همه‌ی صفحه‌ها)؛ بدون فیلتر، همه‌ی دانشپذیرانِ در دسترس کاربر.
+     *
+     * برای حجم بالا: رکوردها دسته‌ای و به صورت آرایه خوانده و سطر به سطر روی دیسک نوشته می‌شوند
+     * (حافظه‌ی ثابت، بدون PhpSpreadsheet).
+     */
     public function actionReport()
     {
-        date_default_timezone_set('Asia/Tehran');
-        require_once(Yii::$app->basePath . '/web/jdf.php');
-        Yii::$app->setTimeZone('Asia/Tehran');
-        $searchModel = new UsersSearch();
-        $dataProvider = $searchModel->search(Yii::$app->request->queryParams);
-        $dataProvider->pagination->pageSize = 50;
-        $exporter = new Spreadsheet([
-            'dataProvider' => $dataProvider,
-            'columns' => [
-                [
-                    'attribute' => 'first_name',
-                    'header' => 'نام'
-                ],
-                [
-                    'attribute' => 'last_name',
-                    'header' => 'نام خانوادگی'
-                ],
-                [
-                    'attribute' => 'username',
-                    'header' => 'نام کاربری'
-                ],
-                [
-                    'attribute' => function($model){
-                        $memberCourse = null;
-                        if ($model->courses != null)
-                            foreach ($model->courses as $course)
-                                if ($course['_id'] == Yii::$app->request->get('_id'))
-                                    $memberCourse = $course;
-                        $registrant = 'نامشخص';
-                        if ($model->registrant != null)
-                        {
-                            if ($model->registrant == Yii::getAlias('@adminUsername'))
-                                $registrant = 'مدیریت';
-                            else if ($model->registrant == $model->username)
-                                $registrant = 'کاربر';
-                            else {
-                                $registrantDetail = DashboardController::registrant_detail($model->registrant);
-                                $role = '';
-                                if ($registrantDetail->role == 'emp')
-                                    $role = 'کارشناس دانشکده';
-                                else if ($registrantDetail->role == 'broker')
-                                    $role = 'کارگزار';
-                                $registrant = $registrantDetail->first_name . ' ' . $registrantDetail->last_name . '(' . $role . ')';
-                            }
-                        }
-                        return $registrant;
-                    },
-                    'header' => 'ثبت کننده'
-                ],
-                [
-                    'attribute' => function($model)
-                    {
-                        if($model->status == 9)
-                            return 'غیر فعال';
-                        else
-                            return 'فعال';
-                    },
-                    'header' => 'وضعیت'
-                ],
-            ],
-        ]);
-        $exporter->save('./newfile.xlsx');
-        $file_name = 'Members-' . jdate('Y/m/d-H:i:s') . '.xlsx';
-        return Yii::$app->response->sendFile('./newfile.xlsx', $file_name);
+        @set_time_limit(0);
+        $query = (new UsersSearch())->buildQuery(Yii::$app->request->queryParams)
+            ->select(['_id', 'first_name', 'last_name', 'username', 'issuance_certificate_information', 'college', 'registrant', 'courses', 'status', 'role'])
+            ->asArray();
+
+        $writer = new XlsxWriter(
+            ['ردیف', 'نام', 'نام خانوادگی', 'نام کاربری', 'کد ملی', 'واحدها', 'ثبت کننده', 'نقش ثبت کننده', 'تعداد دوره', 'وضعیت', 'نقش', 'تاریخ ثبت'],
+            [7, 16, 20, 26, 14, 30, 24, 18, 11, 10, 14, 13]
+        );
+        $registrants = [];
+        foreach ($query->batch(500) as $rows) {
+            // ثبت‌کننده‌های جدیدِ این دسته با یک کوئری
+            $missing = [];
+            foreach ($rows as $row) {
+                $r = isset($row['registrant']) && is_scalar($row['registrant']) ? (string) $row['registrant'] : '';
+                if ($r !== '' && !array_key_exists($r, $registrants))
+                    $missing[$r] = true;
+            }
+            if (!empty($missing)) {
+                $found = UsersDirectory::registrants(array_keys($missing));
+                foreach (array_keys($missing) as $r)
+                    $registrants[$r] = isset($found[$r]) ? $found[$r] : null;
+            }
+            $known = array_filter($registrants) + UsersDirectory::inferSources($rows);
+            foreach ($rows as $row)
+                $writer->addRow($this->reportRow($row, $writer->rowCount() + 1, $known));
+        }
+
+        $path = Yii::getAlias('@runtime') . '/users-export-' . bin2hex(random_bytes(6)) . '.xlsx';
+        $writer->save($path);
+        $response = Yii::$app->response->sendFile($path, 'Members-' . UsersDirectory::jdate('Y-m-d-H-i', time(), 'en') . '.xlsx');
+        $response->on(\yii\web\Response::EVENT_AFTER_SEND, function () use ($path) {
+            @unlink($path);
+        });
+        return $response;
     }
+
+    /**
+     * یک سطر خروجی از سند خام users؛ همه‌ی فیلدها با بررسی نوع خوانده می‌شوند چون داده‌های
+     * قدیمی شکل یکسانی ندارند.
+     */
+    private function reportRow(array $row, $number, array $registrants)
+    {
+        $str = function ($key) use ($row) {
+            return isset($row[$key]) && is_scalar($row[$key]) ? trim((string) $row[$key]) : '';
+        };
+        $info = isset($row['issuance_certificate_information']) && is_array($row['issuance_certificate_information']) ? $row['issuance_certificate_information'] : [];
+        $nationalCode = isset($info['id']) && is_scalar($info['id']) ? (string) $info['id'] : '';
+        $id = isset($row['_id']) ? (string) $row['_id'] : '';
+        $created = preg_match('/^[a-f0-9]{24}$/i', $id) ? UsersDirectory::jdate('Y/m/d', hexdec(substr($id, 0, 8))) : '';
+        $registrant = UsersDirectory::describeUsername($str('registrant'), $str('username'), $registrants);
+        $status = isset($row['status']) && is_scalar($row['status']) ? (int) $row['status'] : Users::STATUS_ACTIVE;
+        return [
+            $number,
+            $str('first_name'),
+            $str('last_name'),
+            $str('username'),
+            $nationalCode,
+            implode('، ', UsersDirectory::collegeNames(isset($row['college']) ? $row['college'] : null)),
+            $registrant['name'],
+            $registrant['roleLabel'],
+            isset($row['courses']) && is_array($row['courses']) ? count($row['courses']) : 0,
+            $status === Users::STATUS_INACTIVE ? 'غیر فعال' : 'فعال',
+            $str('role') === 'mentor' ? 'دستیار استاد' : 'دانشپذیر',
+            $created,
+        ];
+    }
+
+    /**
+     * دوره‌هایی که در فیلتر «دوره» نمایش داده می‌شوند.
+     *
+     * @return array [courseId => title]
+     */
+    private function selectableCourses()
+    {
+        $query = Courses::find()->select(['_id', 'title', 'college'])->orderBy(['_id' => SORT_DESC]);
+        if (!StudentAccess::isAdmin()) {
+            $colleges = StudentAccess::staffColleges();
+            if (empty($colleges))
+                return [];
+            $query->where(['college' => $colleges]);
+        }
+        $result = [];
+        foreach ($query->all() as $course)
+            $result[(string) $course->_id] = StudentProfile::courseTitle($course);
+        return $result;
+    }
+
+    // ================================================================== افزودن
 
     public function actionNew_user()
     {
-        if(Yii::$app->request->isPost)
-        {
-            $find = Users::find()->where(['username' => strtolower(Yii::$app->request->post()['Users']['username'])])->one();
-            if($find == null)
-            {
-                $model = new Users();
-                $model->load(Yii::$app->request->post());
-                $model->username = strtolower(Yii::$app->request->post()['Users']['username']);
-                $model->setPassword(Yii::$app->request->post()['Users']['password_hash']);
-                $model->auth_key = Yii::$app->security->generateRandomString();
-                $model->verification_token = Yii::$app->security->generateRandomString();
-                $model->getAuthKey();
-                $model->role = 'user';
-                $model->status = 10;
-                $model->registrant = Yii::$app->user->identity->username;
-                if( $model->save())
-                    Yii::$app->session->setFlash('status','1');
-                else
-                    Yii::$app->session->setFlash('status','2');
+        $input = Yii::$app->request->post('Users');
+        $input = is_array($input) ? $input : [];
+        $username = UsersImport::normalizeUsername(isset($input['username']) ? $input['username'] : '');
+        $password = isset($input['password_hash']) ? (string) $input['password_hash'] : '';
+        $firstName = trim(isset($input['first_name']) ? (string) $input['first_name'] : '');
+        $lastName = trim(isset($input['last_name']) ? (string) $input['last_name'] : '');
+
+        if ($firstName === '' || $lastName === '' || $password === '' || !UsersImport::isValidUsername($username))
+            return $this->back('error', 'نام، نام خانوادگی، رمز عبور و نام کاربری معتبر (موبایل یا ایمیل) الزامی است');
+        if (($passwordError = UsersImport::passwordError($password)) !== null)
+            return $this->back('error', $passwordError);
+
+        $colleges = StudentAccess::collegesForNewStudent();
+        $existing = Users::find()->where(['username' => $username])->one();
+        if ($existing !== null) {
+            // مانند ورود از اکسل: کاربر موجود خطا نیست؛ واحد کارشناس به او اضافه می‌شود
+            if (!empty($colleges) && StudentAccess::addColleges($existing, $colleges)) {
+                if ($existing->save(false, ['college', 'updated_at']))
+                    return $this->back('info', 'این نام کاربری از قبل وجود داشت؛ دانشپذیر به واحد شما اضافه شد', ['profile', 'id' => (string) $existing->_id]);
+                return $this->back('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید');
             }
-            else
-                Yii::$app->session->setFlash('status','3');
+            return $this->back('warning', 'دانشپذیری با این نام کاربری از قبل وجود دارد');
         }
-        return $this->redirect(Yii::$app->request->referrer);
+
+        $model = new Users();
+        $model->first_name = $firstName;
+        $model->last_name = $lastName;
+        $model->username = $username;
+        $model->setPassword($password);
+        $model->auth_key = Yii::$app->security->generateRandomString();
+        $model->verification_token = Yii::$app->security->generateRandomString();
+        $model->role = 'user';
+        $model->status = Users::STATUS_ACTIVE;
+        $model->registrant = (string) Yii::$app->user->identity->username;
+        $model->must_change_password = true; // رمز اولیه را کارکنان تعیین کرده‌اند (بند ۱.۳ صورتجلسه)
+        // ثبت توسط کارشناس: واحد او به آرایه‌ی college اضافه می‌شود تا دسترسی داشته باشد؛
+        // ثبت توسط مدیر: آرایه‌ی خالی (بدون واحد). فرم، واحد نمی‌پرسد.
+        $model->college = [];
+        StudentAccess::addColleges($model, $colleges);
+        if ($model->save())
+            return $this->back('success', 'دانشپذیر جدید با موفقیت ثبت شد');
+        return $this->back('error', 'خطا در ثبت دانشپذیر، لطفاً دوباره تلاش کنید');
     }
 
+    public function actionExcel_template()
+    {
+        $path = UsersImport::template();
+        $response = Yii::$app->response->sendFile($path, 'users-import-template.xlsx');
+        $response->on(\yii\web\Response::EVENT_AFTER_SEND, function () use ($path) {
+            @unlink($path);
+        });
+        return $response;
+    }
+
+    /**
+     * مرحله‌ی پیش‌نمایش: فایل ذخیره، بررسی و جدول خطاها برگردانده می‌شود.
+     */
     public function actionCheck_excel_file()
     {
-        $errors= array();
-        $file_name = $_FILES['file']['name'];
-        $file_size = $_FILES['file']['size'];
-        $file_tmp = $_FILES['file']['tmp_name'];
-        $file_type = $_FILES['file']['type'];
-        $file_ext = explode('.',$file_name)[1];
+        Yii::$app->response->format = \yii\web\Response::FORMAT_JSON;
+        $stored = UsersImport::store(isset($_FILES['file']) ? $_FILES['file'] : null);
+        if ($stored['error'] !== null)
+            return ['ok' => false, 'html' => $this->renderPartial('_alert', ['type' => 'danger', 'message' => $stored['error']])];
 
-
-        $extensions= array("xlsx", "xls");
-
-        if(in_array($file_ext,$extensions) === false){
-            $response = array(
-                'message' => '<div class="alert alert-danger" role="alert">پسوند فایل انتخاب شده اشتباه می باشد</div>'
-            );
-            return json_encode($response);
+        $analysis = UsersImport::analyze(UsersImport::pathFor($stored['token']));
+        if ($analysis['fatal'] !== null) {
+            UsersImport::discard();
+            return ['ok' => false, 'html' => $this->renderPartial('_alert', ['type' => 'danger', 'message' => $analysis['fatal']])];
         }
-
-        if($file_size > Yii::getAlias('@maxFileSize'))
-        {
-            $response = array(
-                'message' => '<div class="alert alert-danger" role="alert">حجم فایل وارد شده باید کمتر از ۱۰ مگابایت باشد</div>'
-            );
-            return json_encode($response);
-        }
-
-        if(empty($errors) == true)
-        {
-            $newName = Yii::$app->user->identity->username.'-'.uniqid().'.'.$file_ext;
-            move_uploaded_file($file_tmp,"../../frontend/web/uploaded_excels/".$newName);
-            $objPHPExcel = PHPExcel_IOFactory::load('../../frontend/web/uploaded_excels/'.$newName);
-            $sheetData = $objPHPExcel->getActiveSheet()->toArray(null, true, true, true);
-            $i = 0;
-            $j = 1;
-            if($sheetData != null)
-            {
-                $count = count($sheetData) - 1;
-                ob_start();
-                echo '<div class="card">';
-                echo '<div class="mt-3">';
-                echo '<div class="btn-group" role="group" aria-label="Basic example">';
-                echo '<button class="btn btn-secondary">تعداد کاربران موجود در فایل: '.$count.' نفر می باشد</button>';
-                $form = ActiveForm::begin(['action' => ['add_user_from_exel']]);
-                echo '<button type="submit" class="btn btn-success">افزودن نهایی به دوره</button>';
-                echo '<input name="fileName" value="'.$newName.'" type="hidden">';
-                ActiveForm::end();
-                echo '</div>';
-                echo '</div>';
-                echo '<h5 class="card-header heading-color">تعداد کاربر: '.$count.'</h5>';
-                echo '<div class="table-responsive text-nowrap" id="tbl">';
-                echo '<table class="table">';
-                echo '<thead> <tr><th>#</th><th>نام</th><th>نام خانوادگی</th><th>نام کاربری</th><th>رمز عبور</th></tr></thead>';
-                echo '<tbody class="table-border-bottom-0">';
-                foreach ($sheetData as $data)
-                {
-                    if($j++ != 1)
-                    {
-                        echo '<tr>';
-                        echo '<td><span class="badge badge-center bg-label-secondary">'.$i.'</span></td>';
-                        echo '<td>'.$data['A'].'</td>';
-                        echo '<td>'.$data['B'].'</td>';
-                        echo '<td>'.$data['C'].'</td>';
-                        echo '<td>'.$data['D'].'</td>';
-                        echo '</tr>';
-                    }
-                    $i++;
-                }
-                echo '</tbody>';
-                echo '</table>';
-                echo '</div>';
-                echo '</div>';
-                $message = ob_get_contents();
-                ob_end_clean();
-            }
-            $response = array(
-                'message' => $message
-            );
-            return json_encode($response);
-        }
-        else
-        {
-            $response = array(
-                'message' => '<div class="alert alert-danger" role="alert">خطایی در بارگزاری فایل رخ داده، لطفا مجددا تلاش کنید</div>'
-            );
-            return json_encode($response);
-        }
+        if ($analysis['errorCount'] > 0)
+            UsersImport::discard(); // با خطا امکان ثبت نیست؛ کاربر فایل اصلاح‌شده را دوباره می‌فرستد
+        return [
+            'ok' => $analysis['errorCount'] === 0,
+            'html' => $this->renderPartial('_import-preview', [
+                'analysis' => $analysis,
+                'token' => $analysis['errorCount'] === 0 ? $stored['token'] : null,
+                'collegeNames' => UsersDirectory::collegeNames(StudentAccess::collegesForNewStudent()),
+            ]),
+        ];
     }
 
-    public function actionAdd_user_from_exel()
+    /**
+     * ثبت نهایی. فایل دوباره بررسی می‌شود (به پیش‌نمایش اعتماد نمی‌کنیم) و بلافاصله حذف می‌شود.
+     */
+    public function actionAdd_user_from_excel()
     {
-        if(Yii::$app->request->isPost)
-        {
-            if(file_exists('../../frontend/web/uploaded_excels/'.Yii::$app->request->post('fileName')))
-            {
-                $objPHPExcel = PHPExcel_IOFactory::load('../../frontend/web/uploaded_excels/'.Yii::$app->request->post('fileName'));
-                $sheetData = $objPHPExcel->getActiveSheet()->toArray(null, true, true, true);
-                $i = 1;
-                foreach ($sheetData as $data)
-                {
-                    if($i++ != 1)
-                    {
-                        $user = Users::find()->where(['username' => strtolower($data['C'])])->one();
-                        if($user == null)
-                        {
-                            $model = new Users();
-                            $model->first_name = $data['A'];
-                            $model->last_name = $data['B'];
-                            $model->username = strtolower($data['C']);
-                            $model->setPassword($data['D']);
-                            $model->auth_key = Yii::$app->security->generateRandomString();
-                            $model->verification_token = Yii::$app->security->generateRandomString();
-                            $model->getAuthKey();
-                            $model->role = 'user';
-                            $model->status = 10;
-                            $model->registrant = Yii::$app->user->identity->username;
-                            $model->save();
-                        }
-                    }
-                }
-                Yii::$app->session->setFlash('status','4');
-            }
+        $path = UsersImport::pathFor(Yii::$app->request->post('token'));
+        if ($path === null)
+            return $this->back('error', 'فایل پیدا نشد یا منقضی شده است؛ لطفاً دوباره بارگذاری کنید');
+        try {
+            $analysis = UsersImport::analyze($path);
+            if ($analysis['fatal'] !== null || $analysis['errorCount'] > 0)
+                return $this->back('error', 'فایل دارای خطا است؛ لطفاً اصلاح و دوباره بارگذاری کنید');
+            $report = UsersImport::import($analysis);
+        } finally {
+            UsersImport::discard();
         }
-        return $this->redirect(Yii::$app->request->referrer);
+        Yii::$app->session->setFlash('users-import-report', $report);
+        return $this->back('success', 'ورود اطلاعات از فایل اکسل انجام شد');
     }
+
+    // ================================================================== پروفایل
+
+    public function actionProfile($id)
+    {
+        $student = StudentAccess::findStudent($id);
+        if ($student === null)
+            return $this->back('error', 'دانشپذیر مورد نظر یافت نشد یا شما به آن دسترسی ندارید', ['index']);
+        $profile = new StudentProfile($student);
+        return $this->render('profile', [
+            'student' => $student,
+            'profile' => $profile,
+            'registrant' => UsersDirectory::describeRegistrant($student, UsersDirectory::registrants([$student->registrant]) + UsersDirectory::inferSources([$student])),
+        ]);
+    }
+
+    /**
+     * محتوای تب‌های پروفایل (بارگذاری تنبل با AJAX).
+     */
+    public function actionProfile_tab($id, $tab)
+    {
+        $student = $this->findStudentOr404($id);
+        $tabs = ['info', 'courses', 'payments', 'cheques', 'documents'];
+        if (!in_array($tab, $tabs, true))
+            throw new NotFoundHttpException();
+        $profile = new StudentProfile($student);
+        return $this->renderPartial('profile/_tab-' . $tab, [
+            'student' => $student,
+            'profile' => $profile,
+            'registrants' => UsersDirectory::inferSources([$student]) + UsersDirectory::registrants(array_merge(
+                [$student->registrant],
+                array_map(function ($c) {
+                    return isset($c['item']['registrant']) && is_scalar($c['item']['registrant']) ? (string) $c['item']['registrant'] : '';
+                }, $profile->courses())
+            )),
+        ]);
+    }
+
+    /**
+     * دانلود/نمایش مدارک بارگذاری‌شده‌ی دانشپذیر (کارت ملی، آخرین مدرک تحصیلی).
+     */
+    public function actionDocument($id, $type, $inline = 0)
+    {
+        $student = $this->findStudentOr404($id);
+        if (!in_array($type, ['id_file', 'degree_education_file'], true))
+            throw new NotFoundHttpException();
+        $info = $student->issuance_certificate_information;
+        $filename = is_array($info) && !empty($info[$type]) ? (string) $info[$type] : '';
+        $path = $filename === '' ? null : SecureFile::resolve(Yii::getAlias('@frontend/web/certificate_files'), $filename);
+        if ($path === null)
+            throw new NotFoundHttpException('فایل مورد نظر پیدا نشد.');
+        // نمایش درون مرورگر فقط برای تصویر؛ هر نوع دیگری دانلود می‌شود و مرورگر اجازه‌ی حدس نوع/اجرای اسکریپت ندارد
+        $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+        $images = ['jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'png' => 'image/png', 'gif' => 'image/gif', 'webp' => 'image/webp'];
+        $isImage = isset($images[$ext]);
+        $headers = Yii::$app->response->headers;
+        $headers->set('X-Content-Type-Options', 'nosniff');
+        $headers->set('Content-Security-Policy', "default-src 'none'; img-src 'self'; sandbox");
+        return Yii::$app->response->sendFile($path, 'document-' . $type . '.' . $ext, [
+            'inline' => $isImage && (bool) $inline,
+            'mimeType' => $isImage ? $images[$ext] : ($ext === 'pdf' ? 'application/pdf' : 'application/octet-stream'),
+        ]);
+    }
+
+    // ================================================================== تغییرات
 
     public function actionChange_status()
     {
-        if(Yii::$app->request->isPost)
-        {
-            $user = Users::findOne(Yii::$app->request->post()['Users']['_id']);
-            if($user != null)
-            {
-                if($user->status == 9)
-                    $user->status = 10;
-                else
-                    $user->status = 9;
-                if($user->save(false))
-                    Yii::$app->session->setFlash('status','6');
-                else
-                    Yii::$app->session->setFlash('status','2');
-            }
-        }
-        return $this->redirect(Yii::$app->request->referrer);
+        $user = $this->findManagedStudent();
+        if ($user === null)
+            return $this->back('error', 'دانشپذیر مورد نظر یافت نشد یا شما به آن دسترسی ندارید');
+        $user->status = $user->status == Users::STATUS_INACTIVE ? Users::STATUS_ACTIVE : Users::STATUS_INACTIVE;
+        if ($user->save(false, ['status', 'updated_at']))
+            return $this->back('success', $user->status == Users::STATUS_ACTIVE ? 'دانشپذیر فعال شد' : 'دانشپذیر غیرفعال شد');
+        return $this->back('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید');
     }
 
+    /**
+     * فعال/غیرفعال کردن دانشپذیر در یک دوره (منطق packages/change_status):
+     *  فعال → غیرفعال: حذف از کلاس آنلاین.
+     *  غیرفعال → برای دوره‌ی دارای کلاس آنلاین '0' و ثبت مجدد در سامانه؛ در غیر این صورت فعال.
+     */
     public function actionChange_user_course_status()
     {
-        if(Yii::$app->request->isPost)
-        {
-            $user = Users::findOne(Yii::$app->request->post()['Users']['_id']);
-            if($user != null)
-            {
-                if($user->courses != null)
-                {
-                    $userCourses = $user->courses;
-                    if($userCourses[Yii::$app->request->post('row')]['_id'] == Yii::$app->request->post('courseId'))
-                    {
-                        $myCourse = $userCourses[Yii::$app->request->post('row')];
-                        if($myCourse['status'] == '0') // if Courses Not Inserted in AdobeConnect Call API For Insert Course in AdobeConnet
-                        {
-                            // Call AdobeConnect API For Insert User To Course (With Username And Course _ID)
-                            if(true) // Replace With AdobeConnect API Response
-                            {
-                                $userCourses[Yii::$app->request->post('row')]['status'] = '1';
-                            }
-                            else
-                            {
-                                Yii::$app->session->setFlash('status','8');
-                                return $this->redirect(Yii::$app->request->referrer);
-                            }
-                        }
-                        else if($myCourse['status'] == '1')
-                            $userCourses[Yii::$app->request->post('row')]['status'] = '2';
-                        else if($myCourse['status'] == '2')
-                            $userCourses[Yii::$app->request->post('row')]['status'] = '1';
-                        $user->courses = $userCourses;
-                        if($user->save())
-                            Yii::$app->session->setFlash('status','6');
-                        else
-                            Yii::$app->session->setFlash('status','2');
-                    }
-                }
-            }
+        list($user, $row, $course) = $this->findManagedCourse();
+        if ($user === null)
+            return $this->back('error', 'دوره یا دانشپذیر مورد نظر یافت نشد یا شما به آن دسترسی ندارید');
+
+        $courses = $user->courses;
+        $current = isset($courses[$row]['status']) ? (string) $courses[$row]['status'] : '0';
+        $online = ClassroomPlatforms::hasOnlineClass($course);
+        $platform = ClassroomPlatforms::forCourse($course);
+        $warning = null;
+
+        if ($current === '1') {
+            $courses[$row]['status'] = '2';
+            $user->courses = $courses;
+            if (!$user->save(false, ['courses', 'updated_at']))
+                return $this->back('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید');
+            if ($online && !$platform->removeCourseUser($user, (string) $course->_id))
+                $warning = 'وضعیت تغییر کرد اما حذف از کلاس ' . $platform->title() . ' ناموفق بود';
+            return $warning ? $this->back('warning', $warning) : $this->back('success', 'دانشپذیر در این دوره غیرفعال شد');
         }
-        return $this->redirect(Yii::$app->request->referrer);
+
+        $courses[$row]['status'] = $online ? '0' : '1';
+        $user->courses = $courses;
+        if (!$user->save(false, ['courses', 'updated_at']))
+            return $this->back('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید');
+        if ($online && !$platform->registerCourseUsers((string) $course->_id))
+            return $this->back('warning', 'ثبت در کلاس ' . $platform->title() . ' ناموفق بود؛ بعداً از دکمه‌ی «ثبت مجدد» استفاده کنید');
+        return $this->back('success', 'دانشپذیر در این دوره فعال شد');
     }
 
-    public function course_detail($_id)
+    /**
+     * «ثبت مجدد» در سامانه‌ی کلاس آنلاین برای دوره‌ای که وضعیت کاربر در آن '0' است.
+     * فعلاً سرویس در سطح دوره است (همه‌ی کاربرانِ در انتظار آن دوره).
+     */
+    public function actionReregister_course()
     {
-        return Courses::findOne($_id);
+        list($user, $row, $course) = $this->findManagedCourse();
+        if ($user === null)
+            return $this->back('error', 'دوره یا دانشپذیر مورد نظر یافت نشد یا شما به آن دسترسی ندارید');
+        if (!ClassroomPlatforms::hasOnlineClass($course))
+            return $this->back('warning', 'این دوره کلاس آنلاین ندارد');
+        $platform = ClassroomPlatforms::forCourse($course);
+        if ($platform->registerCourseUsers((string) $course->_id))
+            return $this->back('success', 'درخواست ثبت مجدد در ' . $platform->title() . ' ارسال شد؛ وضعیت پس از پردازش به‌روز می‌شود');
+        return $this->back('error', 'ارتباط با سرور ' . $platform->title() . ' برقرار نشد، لطفاً دوباره تلاش کنید');
     }
 
     public function actionEdit_user()
     {
-        if(Yii::$app->request->isPost)
-        {
-            $user = Users::findOne(Yii::$app->request->post()['Users']['_id']);
-            if($user != null)
-            {
-                $user->load(Yii::$app->request->post());
-                if($user->principal_id != null)
-                {
-                    // Begin Call AdobeConnect For Remove Course
-                    $adminRole = Admin::find()->where(['role' => 'user'])->one();
-                    $response = null;
-                    if($adminRole != null)
-                    {
-                        $curl = curl_init();
-
-                        curl_setopt_array($curl, array(
-                            CURLOPT_URL => Yii::getAlias('@baseUrl').'/adobe-connect/update-user-info',
-                            CURLOPT_RETURNTRANSFER => true,
-                            CURLOPT_ENCODING => '',
-                            CURLOPT_MAXREDIRS => 10,
-                            CURLOPT_TIMEOUT => 0,
-                            CURLOPT_FOLLOWLOCATION => true,
-                            CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-                            CURLOPT_CUSTOMREQUEST => 'POST',
-                            CURLOPT_POSTFIELDS =>'{
-                                "principal_id": "'.(string) $user->principal_id.'",
-                                "username": "'.(string) $user->username.'",
-                                "first_name": "'.$user->first_name.'",
-                                "last_name": "'.$user->last_name.'"
-                            }',
-                            CURLOPT_HTTPHEADER => array(
-                                '_id: '.(string) $adminRole->_id,
-                                'Content-Type: application/json'
-                            ),
-                        ));
-                        $response = curl_exec($curl);
-                        $response = json_decode($response);
-                        curl_close($curl);
-                    }
-                    // End Call AdobeConnect For Remove Course
-                    if(property_exists($response,'status'))
-                    {
-                        if($response->status == 'ok')
-                        {
-                            if ($user->save())
-                                Yii::$app->session->setFlash('status', '8');
-                            else
-                                Yii::$app->session->setFlash('status', '2');
-                        }
-                        else
-                            Yii::$app->session->setFlash('status','9');
-                    }
-                    else
-                        Yii::$app->session->setFlash('status','9');
-                }
-                else
-                {
-                    if ($user->save())
-                        Yii::$app->session->setFlash('status', '8');
-                    else
-                        Yii::$app->session->setFlash('status', '2');
-                }
-            }
-        }
-        return $this->redirect(Yii::$app->request->referrer);
+        $user = $this->findManagedStudent();
+        if ($user === null)
+            return $this->back('error', 'دانشپذیر مورد نظر یافت نشد یا شما به آن دسترسی ندارید');
+        // فقط فیلدهای فرم ویرایش؛ نه college/registrant/courses/principal_id
+        $input = Yii::$app->request->post('Users');
+        $input = is_array($input) ? $input : [];
+        $firstName = trim(isset($input['first_name']) ? (string) $input['first_name'] : '');
+        $lastName = trim(isset($input['last_name']) ? (string) $input['last_name'] : '');
+        if ($firstName === '' || $lastName === '')
+            return $this->back('error', 'نام و نام خانوادگی الزامی است');
+        $user->first_name = $firstName;
+        $user->last_name = $lastName;
+        if ($user->principal_id != null && !ClassroomPlatforms::forCourse()->updateUser($user))
+            return $this->back('error', 'ارتباط با سرور Adobe برقرار نشد، تغییرات ذخیره نشد');
+        if ($user->save(false, ['first_name', 'last_name', 'updated_at']))
+            return $this->back('success', 'مشخصات دانشپذیر تغییر یافت');
+        return $this->back('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید');
     }
 
     public function actionChange_password()
     {
-        if(Yii::$app->request->isPost)
-        {
-            $user = Users::findOne(Yii::$app->request->post()['Users']['_id']);
-            if($user != null)
-            {
-                $user->password_hash = Yii::$app->security->generatePasswordHash(Yii::$app->request->post()['Users']['password_hash']);
-                if($user->save())
-                {
-                    Yii::$app->session->setFlash('status','11');
-                    $teacher = Admin::find()->where(['username' => $user->username])->andWhere(['mentor' => true])->one();
-                    if($teacher != null)
-                    {
-                        $teacher->password_hash = Yii::$app->security->generatePasswordHash(Yii::$app->request->post()['Users']['password_hash']);
-                        $teacher->save();
-                    }
-                }
-                else
-                    Yii::$app->session->setFlash('status','2');
-            }
+        $user = $this->findManagedStudent();
+        if ($user === null)
+            return $this->back('error', 'دانشپذیر مورد نظر یافت نشد یا شما به آن دسترسی ندارید');
+        $input = Yii::$app->request->post('Users');
+        $password = is_array($input) && isset($input['password_hash']) ? (string) $input['password_hash'] : '';
+        if ($password === '')
+            return $this->back('error', 'رمز عبور جدید وارد نشده است');
+        if (($passwordError = UsersImport::passwordError($password)) !== null)
+            return $this->back('error', $passwordError);
+        $user->password_hash = Yii::$app->security->generatePasswordHash($password);
+        $user->must_change_password = true; // رمزی که کارکنان تعیین کرده‌اند موقت است
+        if (!$user->save(false, ['password_hash', 'must_change_password', 'updated_at']))
+            return $this->back('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید');
+        // حساب مدرس (mentor) با همین نام کاربری هم هم‌زمان تغییر می‌کند
+        $teacher = Admin::find()->where(['username' => $user->username])->andWhere(['mentor' => true])->one();
+        if ($teacher != null) {
+            $teacher->password_hash = $user->password_hash;
+            $teacher->save(false, ['password_hash']);
         }
-        return $this->redirect(Yii::$app->request->referrer);
+        return $this->back('success', 'رمز عبور تغییر یافت');
     }
 
+    // ================================================================== کمکی
 
+    /**
+     * پیام را ثبت و به صفحه‌ی قبل (یا مسیر داده‌شده) برمی‌گردد.
+     */
+    private function back($type, $message, $url = null)
+    {
+        Yii::$app->session->setFlash(self::FLASH, ['type' => $type, 'message' => $message]);
+        if ($url !== null)
+            return $this->redirect($url);
+        return $this->redirect(SafeRedirect::referrer(['index']));
+    }
+
+    private function findStudentOr404($id)
+    {
+        $student = StudentAccess::findStudent($id);
+        if ($student === null)
+            throw new NotFoundHttpException('دانشپذیر مورد نظر یافت نشد یا شما به آن دسترسی ندارید.');
+        return $student;
+    }
+
+    /**
+     * دانشپذیرِ ارسال‌شده در Users[_id] را فقط اگر کاربر جاری به او دسترسی داشته باشد
+     * برمی‌گرداند (جلوگیری از IDOR).
+     *
+     * @return Users|null
+     */
+    private function findManagedStudent()
+    {
+        $input = Yii::$app->request->post('Users');
+        $id = is_array($input) && isset($input['_id']) ? $input['_id'] : null;
+        return StudentAccess::findStudent($id);
+    }
+
+    /**
+     * دانشپذیر + ردیف دوره در users.courses + خود دوره، با بررسی دسترسی به هر دو.
+     *
+     * @return array [Users|null, int|null, Courses|null]
+     */
+    private function findManagedCourse()
+    {
+        $user = $this->findManagedStudent();
+        $courseId = (string) Yii::$app->request->post('courseId');
+        $row = Yii::$app->request->post('row');
+        if ($user === null || !is_array($user->courses) || !is_scalar($row) || !isset($user->courses[$row]['_id'])
+            || (string) $user->courses[$row]['_id'] !== $courseId || !preg_match('/^[a-f0-9]{24}$/i', $courseId))
+            return [null, null, null];
+        $course = Courses::findOne($courseId);
+        if ($course === null || !StudentAccess::canManageCourse($course))
+            return [null, null, null];
+        return [$user, $row, $course];
+    }
 }
