@@ -85,26 +85,33 @@ class UsersSearch extends Users
 
     /**
      * @param array $params
-     * @param bool $paginate برای خروجی اکسل false
      * @return ActiveDataProvider
      */
-    public function search($params, $paginate = true)
+    public function search($params)
+    {
+        return new ActiveDataProvider([
+            'query' => $this->buildQuery($params),
+            'pagination' => ['pageSize' => $this->pageSize()],
+            'sort' => false,
+        ]);
+    }
+
+    /**
+     * کوئری فیلترشده (مشترک فهرست و خروجی اکسل تا خروجی دقیقاً همان چیزی باشد که کاربر می‌بیند).
+     *
+     * @param array $params
+     * @return \yii\mongodb\ActiveQuery
+     */
+    public function buildQuery($params)
     {
         $query = self::scopedQuery();
 
         $this->load($params);
         $this->normalizeInput();
 
-        $dataProvider = new ActiveDataProvider([
-            'query' => $query,
-            'pagination' => $paginate ? ['pageSize' => $this->pageSize()] : false,
-            'sort' => false,
-        ]);
-
         if (!$this->validate()) {
             // فیلتر نامعتبر: هیچ نتیجه‌ای (به جای نادیده گرفتن بی‌صدای فیلتر)
-            $query->andWhere(['_id' => null]);
-            return $dataProvider;
+            return $query->andWhere(['_id' => null]);
         }
 
         $this->applyFilters($query);
@@ -116,7 +123,7 @@ class UsersSearch extends Users
         else
             $query->orderBy(['_id' => SORT_DESC]);
 
-        return $dataProvider;
+        return $query;
     }
 
     public function pageSize()
@@ -144,6 +151,8 @@ class UsersSearch extends Users
     {
         if (!is_string($value))
             return $value;
+        if (!mb_check_encoding($value, 'UTF-8'))
+            $value = mb_convert_encoding($value, 'UTF-8', 'UTF-8'); // بایت نامعتبر در regex مونگو خطا می‌دهد
         $value = strtr($value, [
             '۰' => '0', '۱' => '1', '۲' => '2', '۳' => '3', '۴' => '4', '۵' => '5', '۶' => '6', '۷' => '7', '۸' => '8', '۹' => '9',
             '٠' => '0', '١' => '1', '٢' => '2', '٣' => '3', '٤' => '4', '٥' => '5', '٦' => '6', '٧' => '7', '٨' => '8', '٩' => '9',
@@ -157,7 +166,7 @@ class UsersSearch extends Users
             if (is_string($this->$attribute))
                 $this->$attribute = self::normalizeDigits($this->$attribute);
         if (is_string($this->username))
-            $this->username = strtolower($this->username);
+            $this->username = mb_strtolower($this->username, 'UTF-8');
         foreach (['per_page', 'status'] as $attribute)
             if ($this->$attribute === '')
                 $this->$attribute = null;
@@ -179,7 +188,7 @@ class UsersSearch extends Users
             $or = ['or',
                 ['like', 'first_name', $this->q],
                 ['like', 'last_name', $this->q],
-                ['like', 'username', strtolower($this->q)],
+                ['like', 'username', mb_strtolower($this->q, 'UTF-8')],
                 ['like', 'issuance_certificate_information.id', $this->q],
             ];
             // «نام نام‌خانوادگی» با هم

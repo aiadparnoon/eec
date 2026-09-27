@@ -12,7 +12,7 @@ $orders = $profile->orders();
 $installments = $profile->installments();
 $successful = 0;
 foreach ($orders as $order)
-    if ((string) $order->status === '1' && !$order->is_canceled)
+    if (StudentProfile::isSuccessfulOrder($order))
         $successful++;
 $overdue = 0;
 foreach ($installments as $installment)

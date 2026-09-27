@@ -40,7 +40,7 @@ $collegeTitles = UsersDirectory::collegeTitles();
     $online = ClassroomPlatforms::hasOnlineClass($course);
     $platform = ClassroomPlatforms::forCourse($course);
     $canManage = StudentAccess::canManageCourse($course);
-    $itemRegistrant = isset($item['registrant']) ? (string) $item['registrant'] : '';
+    $itemRegistrant = isset($item['registrant']) && is_scalar($item['registrant']) ? (string) $item['registrant'] : '';
     $registrantInfo = null;
     if ($itemRegistrant !== '')
         $registrantInfo = UsersDirectory::describeUsername($itemRegistrant, (string) $student->username, $registrants);

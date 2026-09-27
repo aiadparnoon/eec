@@ -76,7 +76,7 @@ class UsersDirectory
      */
     public static function registrants(array $usernames)
     {
-        $usernames = array_values(array_unique(array_filter(array_map('strval', $usernames), 'strlen')));
+        $usernames = array_values(array_unique(array_filter(array_map('strval', array_filter($usernames, 'is_scalar')), 'strlen')));
         if (empty($usernames))
             return [];
         $result = [];
@@ -99,7 +99,8 @@ class UsersDirectory
      */
     public static function describeRegistrant($student, array $registrants)
     {
-        return self::describeUsername((string) $student->registrant, (string) $student->username, $registrants);
+        $registrant = is_scalar($student->registrant) ? (string) $student->registrant : '';
+        return self::describeUsername($registrant, is_scalar($student->username) ? (string) $student->username : '', $registrants);
     }
 
     /**
@@ -155,12 +156,12 @@ class UsersDirectory
     /**
      * تاریخ شمسی از timestamp. jdf.php فقط یک بار بارگذاری می‌شود.
      */
-    public static function jdate($format, $timestamp)
+    public static function jdate($format, $timestamp, $digits = 'fa')
     {
         if ($timestamp === null || $timestamp === '')
             return '-';
-        return self::inTehran(function () use ($format, $timestamp) {
-            return jdate($format, (int) $timestamp, '', 'Asia/Tehran', 'fa');
+        return self::inTehran(function () use ($format, $timestamp, $digits) {
+            return jdate($format, (int) $timestamp, '', 'Asia/Tehran', $digits);
         });
     }
 

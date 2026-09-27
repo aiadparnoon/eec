@@ -179,10 +179,12 @@ class StudentAccess
     {
         if ($value === null || $value === '')
             return [];
-        if (!is_array($value))
+        if (!is_array($value) || (!empty($value) && array_keys($value) !== range(0, count($value) - 1)))
             $value = [$value];
         $result = [];
         foreach ($value as $item) {
+            if (!is_scalar($item) && !($item instanceof \MongoDB\BSON\ObjectId))
+                continue; // داده‌ی قدیمیِ نامعتبر (شیء/آرایه‌ی تو در تو)
             $item = trim((string) $item);
             if ($item !== '')
                 $result[] = $item;

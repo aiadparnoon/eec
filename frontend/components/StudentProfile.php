@@ -135,6 +135,12 @@ class StudentProfile
         return $amount;
     }
 
+    /** پرداخت موفق: status = '1' و لغو نشده */
+    public static function isSuccessfulOrder($order)
+    {
+        return (string) $order->status === '1' && !$order->is_canceled;
+    }
+
     public static function isInstallmentOrder($order)
     {
         return is_array($order->orders) && isset($order->orders[0]['payment_method']) && (string) $order->orders[0]['payment_method'] !== '1';
@@ -215,7 +221,7 @@ class StudentProfile
     {
         $total = 0;
         foreach ($this->orders() as $order)
-            if ((string) $order->status === '1' && !$order->is_canceled)
+            if (self::isSuccessfulOrder($order))
                 $total += self::orderPaidAmount($order);
         foreach ($this->installments() as $installment)
             if (is_array($installment->maturities))

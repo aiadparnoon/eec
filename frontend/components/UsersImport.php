@@ -224,7 +224,8 @@ class UsersImport
      */
     public static function normalizeUsername($value)
     {
-        $value = strtolower(str_replace([' ', "\xE2\x80\x8C", "\xC2\xA0"], '', UsersSearch::normalizeDigits((string) $value)));
+        // mb_strtolower: strtolower در PHP 7.4 به locale وابسته است و متن UTF-8 را خراب می‌کند
+        $value = mb_strtolower(str_replace([' ', "\xE2\x80\x8C", "\xC2\xA0"], '', UsersSearch::normalizeDigits((string) $value)), 'UTF-8');
         if (preg_match('/^9\d{9}$/', $value))
             return '0' . $value;
         if (preg_match('/^(?:\+98|0098|98)(9\d{9})$/', $value, $m))

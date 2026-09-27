@@ -61,8 +61,8 @@ JS
             </p>
         </div>
         <div class="d-flex gap-2">
-            <a class="btn btn-label-success" href="<?= Url::to(array_merge(['report'], Yii::$app->request->queryParams)) ?>">
-                <i class="bx bx-export me-1"></i>خروجی اکسل
+            <a class="btn btn-label-success" href="<?= Url::to(array_merge(['report'], Yii::$app->request->queryParams)) ?>" title="<?= $searchModel->hasFilters() ? 'خروجی از دانشپذیرانِ فیلترشده (همه‌ی صفحه‌ها)' : 'خروجی از همه‌ی دانشپذیرانِ در دسترس شما' ?>">
+                <i class="bx bx-export me-1"></i>خروجی اکسل (<?= $fa($total) ?> نفر)
             </a>
             <div class="btn-group">
                 <button type="button" class="btn btn-primary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">

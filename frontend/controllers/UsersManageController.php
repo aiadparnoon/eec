@@ -10,6 +10,7 @@ use app\components\StudentAccess;
 use app\components\StudentProfile;
 use app\components\UsersDirectory;
 use app\components\UsersImport;
+use app\components\XlsxWriter;
 use app\components\SecureFile;
 use app\components\classroom\ClassroomPlatforms;
 use common\models\Admin;
@@ -17,7 +18,6 @@ use yii\filters\AccessControl;
 use yii\web\Controller;
 use yii\web\NotFoundHttpException;
 use yii\filters\VerbFilter;
-use yii2tech\spreadsheet\Spreadsheet;
 
 /**
  * مدیریت دانشپذیران (مجموعه‌ی users) — docs/specs/users-manage.md
@@ -82,7 +82,7 @@ class UsersManageController extends Controller
 
         $registrantUsernames = [];
         foreach ($students as $student)
-            $registrantUsernames[] = (string) $student->registrant;
+            $registrantUsernames[] = $student->registrant;
 
         return $this->render('index', [
             'searchModel' => $searchModel,
@@ -96,58 +96,79 @@ class UsersManageController extends Controller
     }
 
     /**
-     * خروجی اکسل با همان فیلترهای صفحه (همه‌ی ردیف‌ها، نه فقط صفحه‌ی جاری).
+     * خروجی اکسل: دقیقاً همان دانشپذیرانی که با فیلترهای فعلی در فهرست دیده می‌شوند
+     * (همه‌ی صفحه‌ها)؛ بدون فیلتر، همه‌ی دانشپذیرانِ در دسترس کاربر.
+     *
+     * برای حجم بالا: رکوردها دسته‌ای و به صورت آرایه خوانده و سطر به سطر روی دیسک نوشته می‌شوند
+     * (حافظه‌ی ثابت، بدون PhpSpreadsheet).
      */
     public function actionReport()
     {
-        date_default_timezone_set('Asia/Tehran');
-        $searchModel = new UsersSearch();
-        $dataProvider = $searchModel->search(Yii::$app->request->queryParams, false);
-        $students = $dataProvider->getModels();
-        $usernames = [];
-        foreach ($students as $student)
-            $usernames[] = (string) $student->registrant;
-        $registrants = UsersDirectory::registrants($usernames);
+        @set_time_limit(0);
+        $query = (new UsersSearch())->buildQuery(Yii::$app->request->queryParams)
+            ->select(['_id', 'first_name', 'last_name', 'username', 'issuance_certificate_information', 'college', 'registrant', 'courses', 'status', 'role'])
+            ->asArray();
 
-        $exporter = new Spreadsheet([
-            'dataProvider' => new \yii\data\ArrayDataProvider(['allModels' => $students, 'pagination' => false]),
-            'columns' => [
-                ['header' => 'نام', 'attribute' => 'first_name'],
-                ['header' => 'نام خانوادگی', 'attribute' => 'last_name'],
-                ['header' => 'نام کاربری', 'value' => function ($model) {
-                    return ' ' . $model->username . ' ';
-                }],
-                ['header' => 'کد ملی', 'value' => function ($model) {
-                    $info = $model->issuance_certificate_information;
-                    return is_array($info) && !empty($info['id']) ? ' ' . $info['id'] . ' ' : '-';
-                }],
-                ['header' => 'دانشکده‌ها', 'value' => function ($model) {
-                    $names = UsersDirectory::collegeNames($model->college);
-                    return empty($names) ? '-' : implode('، ', $names);
-                }],
-                ['header' => 'ثبت کننده', 'value' => function ($model) use ($registrants) {
-                    $r = UsersDirectory::describeRegistrant($model, $registrants);
-                    return $r['name'] . ($r['roleLabel'] !== '' ? ' (' . $r['roleLabel'] . ')' : '');
-                }],
-                ['header' => 'تعداد دوره', 'value' => function ($model) {
-                    return is_array($model->courses) ? count($model->courses) : 0;
-                }],
-                ['header' => 'وضعیت', 'value' => function ($model) {
-                    return $model->status == Users::STATUS_INACTIVE ? 'غیر فعال' : 'فعال';
-                }],
-                ['header' => 'تاریخ ثبت', 'value' => function ($model) {
-                    return UsersDirectory::jdate('Y/m/d', hexdec(substr((string) $model->_id, 0, 8)));
-                }],
-            ],
-        ]);
+        $writer = new XlsxWriter(
+            ['ردیف', 'نام', 'نام خانوادگی', 'نام کاربری', 'کد ملی', 'دانشکده‌ها', 'ثبت کننده', 'نقش ثبت کننده', 'تعداد دوره', 'وضعیت', 'نقش', 'تاریخ ثبت'],
+            [7, 16, 20, 26, 14, 30, 24, 18, 11, 10, 14, 13]
+        );
+        $registrants = [];
+        foreach ($query->batch(500) as $rows) {
+            // ثبت‌کننده‌های جدیدِ این دسته با یک کوئری
+            $missing = [];
+            foreach ($rows as $row) {
+                $r = isset($row['registrant']) && is_scalar($row['registrant']) ? (string) $row['registrant'] : '';
+                if ($r !== '' && !array_key_exists($r, $registrants))
+                    $missing[$r] = true;
+            }
+            if (!empty($missing)) {
+                $found = UsersDirectory::registrants(array_keys($missing));
+                foreach (array_keys($missing) as $r)
+                    $registrants[$r] = isset($found[$r]) ? $found[$r] : null;
+            }
+            foreach ($rows as $row)
+                $writer->addRow($this->reportRow($row, $writer->rowCount() + 1, array_filter($registrants)));
+        }
+
         $path = Yii::getAlias('@runtime') . '/users-export-' . bin2hex(random_bytes(6)) . '.xlsx';
-        $exporter->save($path);
-        require_once Yii::getAlias('@frontend') . '/web/jdf.php';
-        $response = Yii::$app->response->sendFile($path, 'Members-' . jdate('Y-m-d-H-i', '', '', 'Asia/Tehran', 'en') . '.xlsx');
+        $writer->save($path);
+        $response = Yii::$app->response->sendFile($path, 'Members-' . UsersDirectory::jdate('Y-m-d-H-i', time(), 'en') . '.xlsx');
         $response->on(\yii\web\Response::EVENT_AFTER_SEND, function () use ($path) {
             @unlink($path);
         });
         return $response;
+    }
+
+    /**
+     * یک سطر خروجی از سند خام users؛ همه‌ی فیلدها با بررسی نوع خوانده می‌شوند چون داده‌های
+     * قدیمی شکل یکسانی ندارند.
+     */
+    private function reportRow(array $row, $number, array $registrants)
+    {
+        $str = function ($key) use ($row) {
+            return isset($row[$key]) && is_scalar($row[$key]) ? trim((string) $row[$key]) : '';
+        };
+        $info = isset($row['issuance_certificate_information']) && is_array($row['issuance_certificate_information']) ? $row['issuance_certificate_information'] : [];
+        $nationalCode = isset($info['id']) && is_scalar($info['id']) ? (string) $info['id'] : '';
+        $id = isset($row['_id']) ? (string) $row['_id'] : '';
+        $created = preg_match('/^[a-f0-9]{24}$/i', $id) ? UsersDirectory::jdate('Y/m/d', hexdec(substr($id, 0, 8))) : '';
+        $registrant = UsersDirectory::describeUsername($str('registrant'), $str('username'), $registrants);
+        $status = isset($row['status']) && is_scalar($row['status']) ? (int) $row['status'] : Users::STATUS_ACTIVE;
+        return [
+            $number,
+            $str('first_name'),
+            $str('last_name'),
+            $str('username'),
+            $nationalCode,
+            implode('، ', UsersDirectory::collegeNames(isset($row['college']) ? $row['college'] : null)),
+            $registrant['name'],
+            $registrant['roleLabel'],
+            isset($row['courses']) && is_array($row['courses']) ? count($row['courses']) : 0,
+            $status === Users::STATUS_INACTIVE ? 'غیر فعال' : 'فعال',
+            $str('role') === 'mentor' ? 'دستیار استاد' : 'دانشپذیر',
+            $created,
+        ];
     }
 
     /**
@@ -283,7 +304,7 @@ class UsersManageController extends Controller
         return $this->render('profile', [
             'student' => $student,
             'profile' => $profile,
-            'registrant' => UsersDirectory::describeRegistrant($student, UsersDirectory::registrants([(string) $student->registrant])),
+            'registrant' => UsersDirectory::describeRegistrant($student, UsersDirectory::registrants([$student->registrant])),
         ]);
     }
 
@@ -301,9 +322,9 @@ class UsersManageController extends Controller
             'student' => $student,
             'profile' => $profile,
             'registrants' => UsersDirectory::registrants(array_merge(
-                [(string) $student->registrant],
+                [$student->registrant],
                 array_map(function ($c) {
-                    return isset($c['item']['registrant']) ? (string) $c['item']['registrant'] : '';
+                    return isset($c['item']['registrant']) && is_scalar($c['item']['registrant']) ? (string) $c['item']['registrant'] : '';
                 }, $profile->courses())
             )),
         ]);

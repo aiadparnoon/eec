@@ -44,17 +44,34 @@ $courseTitle = function ($id) use (&$courseTitles) {
             </tr>
             </thead>
             <tbody>
-            <?php foreach ($orders as $order):
+            <?php
+            // اول پرداخت‌های موفق، بعد ناموفق/لغوشده (هر گروه از جدید به قدیم)
+            $successful = [];
+            $unsuccessful = [];
+            foreach ($orders as $order) {
+                if (StudentProfile::isSuccessfulOrder($order))
+                    $successful[] = $order;
+                else
+                    $unsuccessful[] = $order;
+            }
+            $colspan = $showCourse ? 7 : 6;
+            if (empty($successful)): ?>
+                <tr><td colspan="<?= $colspan ?>" class="text-muted text-center">پرداخت موفقی ثبت نشده است.</td></tr>
+            <?php endif;
+            foreach (array_merge($successful, $unsuccessful) as $i => $order):
                 list($type, $channel) = StudentProfile::paymentType($order);
                 $shares = StudentProfile::shares($order);
                 $pi = is_array($order->payment_info) ? $order->payment_info : [];
-                $paid = (string) $order->status === '1';
+                $paid = StudentProfile::isSuccessfulOrder($order);
+                if ($i === count($successful)): ?>
+                    <tr class="table-light"><td colspan="<?= $colspan ?>" class="fw-semibold small text-muted"><i class="bx bx-error-circle me-1"></i>پرداخت‌های ناموفق / لغوشده (<?= $fa(count($unsuccessful)) ?>)</td></tr>
+                <?php endif;
                 $titles = [];
                 if (is_array($order->orders))
                     foreach ($order->orders as $o)
                         if (isset($o['_id'])) $titles[] = $courseTitle($o['_id']);
                 ?>
-                <tr>
+                <tr class="<?= $paid ? '' : 'text-muted' ?>">
                     <?php if ($showCourse): ?><td class="text-wrap" style="min-width: 160px"><?= Html::encode(implode('، ', $titles)) ?></td><?php endif; ?>
                     <td><span class="fw-semibold"><?= Html::encode($type) ?></span><small class="d-block text-muted"><?= Html::encode($channel) ?></small></td>
                     <td><?= Html::encode(isset($pi['date']) ? $pi['date'] : UsersDirectory::jdate('Y/m/d', hexdec(substr((string) $order->_id, 0, 8)))) ?></td>
@@ -63,11 +80,14 @@ $courseTitle = function ($id) use (&$courseTitles) {
                         <small class="text-muted d-block" dir="ltr" style="text-align:right"><?= Html::encode(isset($pi['tref']) ? $pi['tref'] : '') ?></small>
                     </td>
                     <td>
-                        <span class="fw-semibold d-block"><?= $money(StudentProfile::orderPaidAmount($order)) ?></span>
+                        <span class="<?= $paid ? 'fw-semibold' : 'text-decoration-line-through' ?> d-block"><?= $money($paid ? StudentProfile::orderPaidAmount($order) : $order->amount) ?></span>
                         <?php if ($order->is_canceled): ?><span class="badge bg-label-secondary">لغو شده</span>
                         <?php elseif ($paid): ?><span class="badge bg-label-success">موفق</span>
-                        <?php else: ?><span class="badge bg-label-warning">ناموفق/در انتظار</span><?php endif; ?>
+                        <?php else: ?><span class="badge bg-label-danger">ناموفق</span><?php endif; ?>
                     </td>
+                    <?php if (!$paid): ?>
+                        <td>-</td><td>-</td>
+                    <?php else: ?>
                     <td>
                         <?= $money($shares['college']) ?>
                         <?php if ($shares['collegeId'] !== '' && isset($collegeTitles[$shares['collegeId']])): ?><small class="d-block text-muted"><?= Html::encode($collegeTitles[$shares['collegeId']]) ?></small><?php endif; ?>
@@ -76,6 +96,7 @@ $courseTitle = function ($id) use (&$courseTitles) {
                         <?= $shares['percent'] > 0 ? $money($shares['broker']) : '-' ?>
                         <?php if ($shares['percent'] > 0): ?><small class="d-block text-muted"><?= Html::encode(trim($shares['brokerName'] . ' ' . $fa($shares['percent']) . '٪')) ?></small><?php endif; ?>
                     </td>
+                    <?php endif; ?>
                 </tr>
             <?php endforeach; ?>
             </tbody>
