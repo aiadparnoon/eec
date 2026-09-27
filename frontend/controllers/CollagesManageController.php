@@ -5,49 +5,51 @@ namespace frontend\controllers;
 use Yii;
 use app\models\Colleges;
 use app\models\CollegesSearch;
-use yii\filters\AccessControl;
 use app\models\Courses;
-use app\models\College;
 use app\models\Users;
-use app\models\CollegeCoursesSearch;
-use yii\helpers\ArrayHelper;
-use yii\web\Controller;
-use yii\web\NotFoundHttpException;
-use yii2tech\spreadsheet\Spreadsheet;
+use app\models\UsersSearch;
+use app\components\SafeRedirect;
+use app\components\SecureUpload;
+use app\components\StudentAccess;
+use app\components\StudentProfile;
+use app\components\UnitStats;
+use app\components\UsersDirectory;
+use app\components\XlsxWriter;
+use yii\filters\AccessControl;
 use yii\filters\VerbFilter;
+use yii\web\Controller;
 use yii\web\UploadedFile;
-require_once(Yii::$app->basePath . '/web/jdf.php');
-date_default_timezone_set('Asia/Tehran');
 
 /**
- * CollagesManageController implements the CRUD actions for Colleges model.
+ * مدیریت واحدها (مجموعه‌ی colleges).
+ *
+ *  - مدیر سیستم (user/cnt): همه‌ی واحدها، ثبت واحد جدید، ویرایش اطلاعات مالی.
+ *  - سایر کاربرانِ دارای دسترسی این صفحه: فقط واحد(های) خودشان؛ بدون ثبت واحد و بدون
+ *    تغییر شناسه‌ی حساب (تغییر حساب مقصد پرداخت فقط توسط مدیر).
  */
-//class CollagesManageController extends BaseController
 class CollagesManageController extends Controller
 {
-    /**
-     * {@inheritdoc}
-     */
+    const FLASH = 'units-manage';
+    const LOGO_DIR = '@frontend/web/college_logos';
+
     public function behaviors()
     {
         return [
             'access' => [
                 'class' => AccessControl::className(),
-
                 'rules' => [
                     [
                         'allow' => false,
                         'roles' => ['?'],
                     ],
                     [
-                        'actions' => ['index', 'report', 'new', 'edit', 'report'],
+                        'actions' => ['index', 'new', 'edit', 'report'],
                         'allow' => true,
                         'roles' => ['@'],
                         'matchCallback' => function ($rule, $action) {
-                            if (in_array(Yii::$app->controller->id, Yii::$app->user->identity->access) !== false || Yii::$app->user->identity->role == 'user')
-                                return true;
-                            else
-                                return false;
+                            $identity = Yii::$app->user->identity;
+                            return $identity->role == 'user'
+                                || (is_array($identity->access) && in_array(Yii::$app->controller->id, $identity->access, true));
                         }
                     ],
                 ],
@@ -58,156 +60,241 @@ class CollagesManageController extends Controller
             'verbs' => [
                 'class' => VerbFilter::className(),
                 'actions' => [
-                    'logout' => ['post'],
+                    'new' => ['post'],
+                    'edit' => ['post'],
+                    'report' => ['post'],
                 ],
             ],
         ];
     }
 
-    /**
-     * Lists all Buyers models.
-     * @return mixed
-     */
     public function actionIndex()
     {
         $searchModel = new CollegesSearch();
         $dataProvider = $searchModel->search(Yii::$app->request->queryParams);
         $dataProvider->pagination->pageSize = 30;
-        $years = array();
-        for ($i = 1401; $i <= jdate('Y'); $i++)
-            array_push($years, $i);
+        $visible = $this->visibleUnitIds();
+        if ($visible !== null)
+            $dataProvider->query->andWhere(['_id' => array_map(function ($id) {
+                return new \MongoDB\BSON\ObjectId($id);
+            }, array_filter($visible, function ($id) {
+                return preg_match('/^[a-f0-9]{24}$/i', $id) === 1;
+            }))]);
+
+        $currentYear = (int) UsersDirectory::jdate('Y', time(), 'en');
         return $this->render('index', [
             'searchModel' => $searchModel,
             'dataProvider' => $dataProvider,
-            'years' => $years,
+            'years' => range($currentYear, 1401),
+            'stats' => UnitStats::all($visible),
+            'isAdmin' => StudentAccess::isAdmin(),
         ]);
     }
 
     public function actionNew()
     {
-        if (Yii::$app->request->isPost)
-        {
-            $model = new Colleges();
-            $find = Colleges::find()->where(['title' => Yii::$app->request->post()['Colleges']['title']])->andWhere(['prefix' => Yii::$app->request->post()['Colleges']['prefix']])->one();
-            if ($find == null)
-            {
-                $model = new Colleges();
-                $model->load(Yii::$app->request->post());
+        if (!StudentAccess::isAdmin())
+            return $this->back('error', 'ثبت واحد جدید فقط توسط مدیر سیستم امکان‌پذیر است');
 
-                $file = UploadedFile::getInstance($model, 'logo');
-                $file_ext = $file->extension;
-                $file_name = uniqid() . '.' . $file_ext;
-                $file->saveAs('../../frontend/web/college_logos/' . $file_name);
-                if (UploadedFile::getInstance($model, 'logo') != null)
-                    $model->logo = $file_name;
+        $model = new Colleges(['scenario' => Colleges::SCENARIO_MANAGE]);
+        $this->assign($model, true);
+        $model->status = '1';
+        // کد واحد خودکار و یکتا؛ از فرم پذیرفته نمی‌شود و فقط بعد از اعتبارسنجی موفق تولید می‌شود
+        // تا تلاش‌های ناموفق شماره‌ای مصرف نکنند
+        if (!$model->validate(array_diff($model->activeAttributes(), ['prefix'])))
+            return $this->back('error', $this->firstError($model));
 
-                if ($_FILES['Colleges']['name']['signature_file'] != '')
-                {
-                    $file = UploadedFile::getInstance($model, 'signature_file');
-                    $file_ext = $file->extension;
-                    $file_name = uniqid() . '.' . $file_ext;
-                    $file->saveAs('../../frontend/web/college_logos/' . $file_name);
-                    if (UploadedFile::getInstance($model, 'signature_file') != null)
-                        $model->signature_file = $file_name;
-                }
+        $logo = UploadedFile::getInstance($model, 'logo');
+        if ($logo === null)
+            return $this->back('error', 'لوگوی واحد الزامی است');
+        $logoName = SecureUpload::save($logo, 'image', self::LOGO_DIR);
+        if ($logoName === null)
+            return $this->back('error', 'لوگو: ' . SecureUpload::$lastError);
+        $model->logo = $logoName;
 
-                $model->status = '1';
-                if ($model->save())
-                    Yii::$app->session->setFlash('status', '1');
-                else
-                    Yii::$app->session->setFlash('status', '2');
+        $signature = UploadedFile::getInstance($model, 'signature_file');
+        if ($signature !== null) {
+            $signatureName = SecureUpload::save($signature, 'image', self::LOGO_DIR);
+            if ($signatureName === null) {
+                SecureUpload::delete(self::LOGO_DIR, $logoName);
+                return $this->back('error', 'فایل امضا: ' . SecureUpload::$lastError);
             }
-            else
-                Yii::$app->session->setFlash('status', '3');
+            $model->signature_file = $signatureName;
         }
-        return $this->redirect(Yii::$app->request->referrer);
+
+        $model->prefix = Colleges::generateUnitCode();
+        if ($model->save(false))
+            return $this->back('success', 'واحد «' . $model->title . '» با کد ' . $model->prefix . ' ثبت شد');
+        SecureUpload::delete(self::LOGO_DIR, $model->logo);
+        SecureUpload::delete(self::LOGO_DIR, $model->signature_file);
+        return $this->back('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید');
     }
 
     public function actionEdit()
     {
-        if (Yii::$app->request->isPost) {
-            $find = Colleges::findOne(Yii::$app->request->post()['Colleges']['_id']);
-            if ($find != null) {
-                $preLogo = $find->logo;
-                $preSignatureFile = $find->signature_file;
-                $find->load(Yii::$app->request->post());
-                if ($_FILES['Colleges']['name']['logo'] != '')
-                {
-                    if ($preLogo != '' && $preLogo != null)
-                        unlink('../../frontend/web/college_logos/' . $preLogo);
-                    $file1 = UploadedFile::getInstance($find, 'logo');
-                    $file1_ext = $file1->extension;
-                    $file1_name = uniqid() . '.' . $file1_ext;
-                    $file1->saveAs('../../frontend/web/college_logos/' . $file1_name);
-                    if (UploadedFile::getInstance($find, 'logo') != null)
-                        $find->logo = $file1_name;
-                }
-                else
-                    $find->logo = $preLogo;
+        $input = Yii::$app->request->post('Colleges');
+        $id = is_array($input) && isset($input['_id']) && is_string($input['_id']) ? $input['_id'] : '';
+        $model = $this->findUnit($id);
+        if ($model === null)
+            return $this->back('error', 'واحد مورد نظر یافت نشد یا شما به آن دسترسی ندارید');
 
-                if ($_FILES['Colleges']['name']['signature_file'] != '')
-                {
-                    if ($preSignatureFile != '' && $preSignatureFile != null)
-                        unlink('../../frontend/web/college_logos/' . $preSignatureFile);
-                    $file1 = UploadedFile::getInstance($find, 'signature_file');
-                    $file1_ext = $file1->extension;
-                    $file1_name = uniqid() . '.' . $file1_ext;
-                    $file1->saveAs('../../frontend/web/college_logos/' . $file1_name);
-                    if (UploadedFile::getInstance($find, 'signature_file') != null)
-                        $find->signature_file = $file1_name;
-                }
-                else
-                    $find->signature_file = $preSignatureFile;
+        $model->scenario = Colleges::SCENARIO_MANAGE;
+        $isAdmin = StudentAccess::isAdmin();
+        $this->assign($model, $isAdmin);
+        if (!is_scalar($model->prefix) || trim((string) $model->prefix) === '')
+            $model->prefix = Colleges::generateUnitCode(); // واحد قدیمی بدون کد
+        if (!$model->validate())
+            return $this->back('error', $this->firstError($model));
 
-                if ($find->save())
-                    Yii::$app->session->setFlash('status', '4');
-                else
-                    Yii::$app->session->setFlash('status', '2');
+        $oldLogo = $model->getOldAttribute('logo');
+        $oldSignature = $model->getOldAttribute('signature_file');
+        $newFiles = [];
+        foreach (['logo' => 'لوگو', 'signature_file' => 'فایل امضا'] as $attribute => $label) {
+            $file = UploadedFile::getInstance($model, $attribute);
+            if ($file === null)
+                continue;
+            $name = SecureUpload::save($file, 'image', self::LOGO_DIR);
+            if ($name === null) {
+                foreach ($newFiles as $saved)
+                    SecureUpload::delete(self::LOGO_DIR, $saved);
+                return $this->back('error', $label . ': ' . SecureUpload::$lastError);
             }
-            return $this->redirect(Yii::$app->request->referrer);
-        } else
-            return $this->redirect(Yii::$app->request->referrer);
+            $model->$attribute = $name;
+            $newFiles[$attribute] = $name;
+        }
+
+        if (!$model->save(false)) {
+            foreach ($newFiles as $saved)
+                SecureUpload::delete(self::LOGO_DIR, $saved);
+            return $this->back('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید');
+        }
+        // فایل قبلی فقط بعد از ذخیره‌ی موفق حذف می‌شود
+        if (isset($newFiles['logo']))
+            SecureUpload::delete(self::LOGO_DIR, $oldLogo);
+        if (isset($newFiles['signature_file']))
+            SecureUpload::delete(self::LOGO_DIR, $oldSignature);
+        return $this->back('success', 'واحد «' . $model->title . '» ویرایش شد');
     }
 
+    /**
+     * گزارش سالانه‌ی دوره‌های یک واحد (سال شمسی) با تعداد شرکت‌کنندگان هر دوره.
+     */
     public function actionReport()
     {
-        date_default_timezone_set('Asia/Tehran');
-        require_once(Yii::$app->basePath . '/web/jdf.php');
-        Yii::$app->setTimeZone('Asia/Tehran');
-        $searchModel = new CollegeCoursesSearch();
-        $dataProvider = $searchModel->search(Yii::$app->request->queryParams, Yii::$app->request->post('year'), Yii::$app->request->post('college'));
-        $dataProvider->pagination = false;
-        $exporter = new Spreadsheet([
-            'dataProvider' => $dataProvider,
-            'columns' => [
-                [
-                    'attribute' => function($model){
-                        return ' '.$model->title['main_fa'].' ';
-                    },
-                    'header' => ' نام دوره'
-                ],
-                [
-                    'attribute' => function($model)
-                    {
-                        $users = Users::find()->where(['courses._id' => (string) $model->_id])->count();
-                        return $users;
-                    },
-                    'header' => 'تعداد شرکت کنندگان'
-                ],
-            ],
-        ]);
-        $exporter->save('./newfile.xlsx');
-        $file_name = 'CollegeReport-' . Yii::$app->request->post('year') . '.xlsx';
-        return Yii::$app->response->sendFile('./newfile.xlsx', $file_name);
+        $unit = $this->findUnit((string) Yii::$app->request->post('college'));
+        $year = (int) UsersSearch::normalizeDigits((string) Yii::$app->request->post('year'));
+        if ($unit === null)
+            return $this->back('error', 'واحد مورد نظر یافت نشد یا شما به آن دسترسی ندارید');
+        if ($year < 1390 || $year > 1500)
+            return $this->back('error', 'سال انتخاب‌شده معتبر نیست');
+
+        $from = UsersSearch::jalaliToTimestamp($year . '/1/1', false);
+        $to = UsersSearch::jalaliToTimestamp(($year + 1) . '/1/1', false) - 1;
+        $courses = Courses::find()
+            ->select(['_id', 'title', 'license_code', 'status', 'content_type', 'type', 'price'])
+            ->where(['college' => (string) $unit->_id])
+            ->andWhere(['status' => ['0', '1', '6']])
+            ->andWhere(['from_pec' => ['$ne' => true]])
+            ->andWhere(['_id' => ['$gte' => UsersSearch::objectIdFromTime($from), '$lte' => UsersSearch::objectIdFromTime($to, true)]])
+            ->orderBy(['_id' => SORT_DESC])
+            ->asArray()
+            ->all();
+
+        // تعداد شرکت‌کنندگان همه‌ی دوره‌ها با یک aggregation
+        $participants = [];
+        $ids = array_map(function ($c) {
+            return (string) $c['_id'];
+        }, $courses);
+        if (!empty($ids)) {
+            $rows = Users::getCollection()->aggregate([
+                ['$match' => ['courses._id' => ['$in' => $ids]]],
+                ['$project' => ['courses._id' => 1]],
+                ['$unwind' => '$courses'],
+                ['$match' => ['courses._id' => ['$in' => $ids]]],
+                ['$group' => ['_id' => '$courses._id', 'count' => ['$sum' => 1]]],
+            ]);
+            foreach ($rows as $row)
+                $participants[(string) $row['_id']] = (int) $row['count'];
+        }
+
+        $writer = new XlsxWriter(['ردیف', 'نام دوره', 'کد مجوز', 'نوع دوره', 'نوع برگزاری', 'تاریخ ایجاد', 'تعداد شرکت‌کنندگان'], [7, 45, 16, 16, 16, 14, 18]);
+        foreach ($courses as $i => $course) {
+            $id = (string) $course['_id'];
+            $title = isset($course['title']['main_fa']) && is_scalar($course['title']['main_fa']) ? (string) $course['title']['main_fa'] : '-';
+            $writer->addRow([
+                $i + 1,
+                $title,
+                isset($course['license_code']) && is_scalar($course['license_code']) ? (string) $course['license_code'] : '',
+                UsersDirectory::courseType(isset($course['type']) ? $course['type'] : ''),
+                UsersDirectory::contentType(isset($course['content_type']) ? $course['content_type'] : ''),
+                UsersDirectory::jdate('Y/m/d', hexdec(substr($id, 0, 8))),
+                isset($participants[$id]) ? $participants[$id] : 0,
+            ]);
+        }
+        $path = Yii::getAlias('@runtime') . '/unit-report-' . bin2hex(random_bytes(6)) . '.xlsx';
+        $writer->save($path);
+        $response = Yii::$app->response->sendFile($path, 'UnitReport-' . $year . '.xlsx');
+        $response->on(\yii\web\Response::EVENT_AFTER_SEND, function () use ($path) {
+            @unlink($path);
+        });
+        return $response;
     }
 
-    public function author_detail($_id)
+    // ------------------------------------------------------------------ کمکی
+
+    /**
+     * فقط فیلدهای مجاز فرم؛ بدون mass-assignment (status، allow_free_add_user، ... از فرم پذیرفته نمی‌شوند).
+     */
+    private function assign(Colleges $model, $withFinancial)
     {
-        return Personnel::findOne($_id);
+        $input = Yii::$app->request->post('Colleges');
+        $input = is_array($input) ? $input : [];
+        // prefix (کد واحد) عمداً اینجا نیست: هنگام ثبت خودکار تولید می‌شود و بعد از آن ثابت می‌ماند،
+        // چون کد مجوز همه‌ی دوره‌های واحد با آن ساخته شده است
+        foreach (['title', 'first_line_signature_fa', 'second_line_signature_fa', 'title_en', 'name', 'last_name',
+                     'first_line_signature_en', 'second_line_signature_en', 'phone'] as $field)
+            $model->$field = isset($input[$field]) && is_scalar($input[$field]) ? (string) $input[$field] : '';
+        if ($withFinancial) {
+            $financial = isset($input['financial_info']) && is_array($input['financial_info']) ? $input['financial_info'] : [];
+            $model->financial_info = ['id' => isset($financial['id']) && is_scalar($financial['id']) ? (string) $financial['id'] : ''];
+        } else {
+            // غیرمدیر: اطلاعات مالی دست‌نخورده می‌ماند (validator فقط ساب سرویس آی دی را یکسان‌سازی می‌کند)
+            $model->financial_info = is_array($model->financial_info) ? $model->financial_info : [];
+            $model->validateAccount = false;
+        }
     }
 
-    public function lesson_detail($_id)
+    /**
+     * @return string[]|null شناسه‌ی واحدهای قابل مشاهده؛ null یعنی همه (مدیر)
+     */
+    private function visibleUnitIds()
     {
-        return Lessons::find()->where(['code' => $_id])->one();
+        return StudentAccess::isAdmin() ? null : StudentAccess::staffColleges();
+    }
+
+    /**
+     * @return Colleges|null
+     */
+    private function findUnit($id)
+    {
+        if (!is_string($id) || !preg_match('/^[a-f0-9]{24}$/i', $id))
+            return null;
+        $visible = $this->visibleUnitIds();
+        if ($visible !== null && !in_array($id, $visible, true))
+            return null;
+        return Colleges::findOne($id);
+    }
+
+    private function firstError(Colleges $model)
+    {
+        foreach ($model->getFirstErrors() as $error)
+            return $error;
+        return 'اطلاعات وارد شده معتبر نیست';
+    }
+
+    private function back($type, $message)
+    {
+        Yii::$app->session->setFlash(self::FLASH, ['type' => $type, 'message' => $message]);
+        return $this->redirect(SafeRedirect::referrer(['index']));
     }
 }
