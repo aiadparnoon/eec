@@ -1,0 +1,30 @@
+# dependencies (composer install)
+/vendor/
+composer.phar
+
+# local configs / secrets
+*-local.php
+!/environments/**/*-local.php
+.env
+*.pem
+*.key
+
+# runtime & generated
+/frontend/runtime/*
+/console/runtime/*
+/frontend/web/assets/*
+!/frontend/web/assets/.gitkeep
+
+# personal / uploaded files
+/frontend/protected_folders/
+
+# backups & archives
+*.bak*
+*.zip
+*.gz
+*.sql
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
