@@ -128,6 +128,7 @@ class Courses extends \yii\mongodb\ActiveRecord
             'credit',
             'allow_free_add_user',
             'deadline_date',
+            'digital_cert', // true = صدور گواهی دیجیتال برای این دوره فعال است
         ];
     }
 

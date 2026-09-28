@@ -551,10 +551,10 @@ else
     <button onclick="printElement()" class="btn btn-warning">پرینت مدرک</button>
 
     <?php
-    foreach($users as $item)
+    foreach($users as $user)
     {
-        $userDetail = $this->context->user_detail($item->username);
-        $request = $this->context->check_request($item->username, (string) $courseDetail->_id);
+        $userDetail = $user;
+        $request = $this->context->check_request($user->username, (string) $courseDetail->_id);
         if($request != null)
         {
             $gender = 'Mr';
@@ -638,9 +638,9 @@ else
     ?>
 
     <?php
-    foreach($users as $item)
+    foreach($users as $user)
     {
-        $userDetail = $this->context->user_detail($item->username);
+        $userDetail = $user;
         $gender = 'Mr';
         $gender1 = 'آقای';
 
@@ -652,8 +652,7 @@ else
                 $gender1 = 'خانم';
             }
         }
-        $userDetail = $this->context->user_detail($item->username);
-        $request = $this->context->check_request($item->username, (string) $courseDetail->_id);
+        $request = $this->context->check_request($user->username, (string) $courseDetail->_id);
         if($request != null)
         {
             $gpa = $this->context->user_score((string) $courseDetail->_id, (string) $userDetail->_id);
@@ -715,10 +714,10 @@ else
     ?>
 
     <?php
-    foreach($users as $item)
+    foreach($users as $user)
     {
-        $userDetail = $this->context->user_detail($item->username);
-        $request = $this->context->check_request($item->username, (string) $courseDetail->_id);
+        $userDetail = $user;
+        $request = $this->context->check_request($user->username, (string) $courseDetail->_id);
         if($request != null)
         {
             $gender = 'Mr';
@@ -795,10 +794,11 @@ else
     }
     ?>
 
-    <?php foreach($users as $item)
+    <?php
+    foreach($users as $user)
     {
-        $userDetail = $this->context->user_detail($item->username);
-        $request = $this->context->check_request($item->username, (string) $courseDetail->_id);
+        $userDetail = $user;
+        $request = $this->context->check_request($user->username, (string) $courseDetail->_id);
         if($request != null)
         {
             $gender = 'Mr';
@@ -892,10 +892,10 @@ else
     ?>
 
     <?php
-    foreach($users as $item)
+    foreach($users as $user)
     {
-        $userDetail = $this->context->user_detail($item->username);
-        $request = $this->context->check_request($item->username, (string) $courseDetail->_id);
+        $userDetail = $user;
+        $request = $this->context->check_request($user->username, (string) $courseDetail->_id);
         if($request != null)
         {
             $gender = 'Mr';
@@ -976,7 +976,7 @@ else
                                         <div class="d-flex align-items-center gap-4">
                                         <span class="pe-4">
                                             <?php
-                                            if (array_key_exists('duration', $lesson['date']))
+                                            if (isset($lesson['date']['duration']))
                                                 echo Html::encode($this->context->convert($lesson['date']['duration']));
                                             else
                                                 echo '-';
@@ -1102,7 +1102,7 @@ else
                                         <div class="d-flex align-items-center gap-4">
                                         <span style="font-family: Sans-serif;">
                                             <?php
-                                            if (array_key_exists('duration', $lesson['date']))
+                                            if (isset($lesson['date']['duration']))
                                                 echo Html::encode($this->context->convert($lesson['date']['duration']));
                                             else
                                                 echo '-';
@@ -1161,10 +1161,11 @@ else
     }
     ?>
 
-    <?php foreach($users as $item)
+    <?php
+    foreach($users as $user)
     {
-        $userDetail = $this->context->user_detail($item->username);
-        $request = $this->context->check_request($item->username, (string) $courseDetail->_id);
+        $userDetail = $user;
+        $request = $this->context->check_request($user->username, (string) $courseDetail->_id);
         if($request != null)
         {
             $gender = 'Mr';
@@ -1244,7 +1245,7 @@ else
                                     <div class="d-flex align-items-center gap-4">
                                     <span style="font-family: Sans-serif;">
                                         <?php
-                                        if (array_key_exists('duration', $lesson['date']))
+                                        if (isset($lesson['date']['duration']))
                                             echo Html::encode($this->context->convert($lesson['date']['duration']));
                                         else
                                             echo '-';

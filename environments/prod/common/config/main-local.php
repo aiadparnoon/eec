@@ -1,5 +1,10 @@
 <?php
 return [
+    // Secrets: fill in on each server, never commit real values.
+    'aliases' => [
+        '@adobe_password' => '',
+        '@payment_api_key' => '',
+    ],
     'components' => [
         'db' => [
             'class' => 'yii\db\Connection',

@@ -44,7 +44,9 @@ class DashboardController extends \common\component\Controller
                         'roles' => ['?'],
                     ],
                     [
-                        'actions' => ['index','export-courses-year','test','test1','test2','text3','create_natural','full-report','courses-report','report'],
+                        // test/test1/test2/text3 اسکریپت‌های یک‌باره‌ی تغییر داده‌اند و با GET اجرا می‌شدند؛
+                        // از وب بسته شدند (هر کارمندی، حتی مدرس و کارگزار، می‌توانست اجرایشان کند). جای این کارها console/migrations است.
+                        'actions' => ['index','export-courses-year','create_natural','full-report','courses-report','report'],
                         'allow' => true,
                         'roles' => ['@'],
                         'matchCallback' => function ($rule, $action) {

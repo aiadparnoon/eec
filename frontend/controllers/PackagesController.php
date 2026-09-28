@@ -4106,7 +4106,7 @@ class PackagesController extends Controller
                 "mobile": "",
                 "amount": "'. $amount.'",
                 "id": "'. $collegeDetail->financial_info['id'].'",
-                "api_key": "63eb5e997d30590001bb0107",
+                "api_key": "'. \app\components\PaymentConfig::apiKey() .'",
                 "callback": "https://eec1.ut.ac.ir/packages/courses_financial_callback"
 }',
                                 CURLOPT_HTTPHEADER => array(
@@ -4247,7 +4247,7 @@ class PackagesController extends Controller
                 "mobile": "",
                 "amount": "'. $requestDetail->amount.'",
                 "id": "'. $collegeDetail->financial_info['id'].'",
-                "api_key": "63eb5e997d30590001bb0107",
+                "api_key": "'. \app\components\PaymentConfig::apiKey() .'",
                 "callback": "https://eec1.ut.ac.ir/packages/add_credit_callback"
 }',
                                     CURLOPT_HTTPHEADER => array(
