@@ -295,31 +295,8 @@ $tab = <<< JS
 JS;
 $this->registerJs($tab);
 // تاریخ اتمام حداقل یک روز بعد از تاریخ شروع (سمت سرور هم بررسی می‌شود)
-$this->registerJs(<<<JS
-(function () {
-    var start = document.getElementById('start-date'), end = document.getElementById('end-date');
-    if (!start || !end) return;
-    function apply() {
-        var s = start._flatpickr, e = end._flatpickr;
-        if (!s || !e || !s.selectedDates[0]) return;
-        var min = new Date(s.selectedDates[0].getTime() + 86400000);
-        e.set('minDate', min);
-        if (e.selectedDates[0] && e.selectedDates[0] < min) e.clear();
-    }
-    setTimeout(function () {
-        apply();
-        if (start._flatpickr) start._flatpickr.config.onChange.push(apply);
-    }, 300);
-    $(start).closest('form').on('submit', function (ev) {
-        var s = start._flatpickr, e = end._flatpickr;
-        if (s && e && s.selectedDates[0] && e.selectedDates[0] && e.selectedDates[0] - s.selectedDates[0] < 86400000 - 3600000) {
-            ev.preventDefault();
-            toastr.error('تاریخ اتمام دوره باید حداقل یک روز بعد از تاریخ شروع باشد', '', {positionClass: 'toast-top-center'});
-        }
-    });
-})();
-JS
-);
+\frontend\assets\DateRangeAsset::register($this);
+$this->registerJs("EecDateRange.bind(document.getElementById('start-date'), document.getElementById('end-date'));");
 $url = Yii::$app->urlManager->createAbsoluteUrl('packages/show_user_detail','https');
 $_csrf = Yii::$app->request->getCsrfToken();
 $list = <<<JS

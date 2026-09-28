@@ -11,12 +11,14 @@
 use app\components\CourseAccess;
 use app\components\ShortCourseForm;
 use app\models\ClassroomServers;
+use frontend\assets\DateRangeAsset;
 use mihaildev\ckeditor\CKEditor;
 use yii\helpers\Html;
 use yii\helpers\Json;
 use yii\helpers\Url;
 
 $optionsUrl = Json::htmlEncode(Url::to(['unit-options']));
+DateRangeAsset::register($this);
 $minHours = ShortCourseForm::MIN_HOURS;
 $maxHours = ShortCourseForm::MAX_HOURS;
 $this->registerJs(<<<JS
@@ -81,17 +83,17 @@ $this->registerJs(<<<JS
     if ($.fn.flatpickr) {
         var opts = {locale: 'fa', dateFormat: 'Y-m-d', altInput: true, altFormat: 'Y/m/d', disableMobile: true};
         var end = $('#new-end').flatpickr($.extend({}, opts, {onChange: preview}));
-        var start = $('#new-start').flatpickr($.extend({}, opts, {onChange: function (dates) {
-            if (dates[0]) { var min = new Date(dates[0].getTime() + 86400000); end.set('minDate', min); if (end.selectedDates[0] && end.selectedDates[0] < min) end.clear(); }
-            preview();
-        }}));
+        var start = $('#new-start').flatpickr($.extend({}, opts, {onChange: preview}));
+        // اتمام حداقل یک روز بعد از شروع: روزهای نامجاز غیرفعال، مقدار نامعتبر پاک و خطا نمایش داده می‌شود
+        EecDateRange.bind(document.getElementById('new-start'), document.getElementById('new-end'));
         function preview() {
             var s = start.selectedDates[0], e = end.selectedDates[0];
             if (!s || !e) { $('#new-deadline').val(''); return; }
-            var days = Math.floor((e - s) / 86400000);
+            var days = Math.floor((e.getTime() - s.getTime()) / 86400000);
+            if (days < 1) { $('#new-deadline').val(''); return; }
             var d = new Date(s.getTime() + Math.floor(days / 4) * 86400000);
-            var j = typeof gregorian_to_jalali === 'function' ? gregorian_to_jalali(d.getFullYear(), d.getMonth() + 1, d.getDate()) : null;
-            $('#new-deadline').val(j ? j[0] + '/' + ('0' + j[1]).slice(-2) + '/' + ('0' + j[2]).slice(-2) : '');
+            // تاریخ‌های این flatpickr شیء JDate هستند؛ قالب‌بندی شمسی با خود flatpickr
+            $('#new-deadline').val(end.formatDate(typeof JDate === 'function' ? new JDate(d) : d, 'Y/m/d'));
         }
     }
     $('#new-course').on('shown.bs.modal', function () {
