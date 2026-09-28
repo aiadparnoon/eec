@@ -8,7 +8,7 @@ use app\models\ClassroomServers;
 use app\models\Colleges;
 use app\models\Courses;
 use app\models\CoursesContents;
-use app\models\CoursesMembers;
+use app\models\CourseMembersSearch;
 use app\models\Discounts;
 use app\models\Generals;
 use app\models\Lessons;
@@ -17,6 +17,7 @@ use app\models\ShortCoursesSearch;
 use app\models\Teachers;
 use app\models\Users;
 use app\components\CourseAccess;
+use app\components\CourseMembersImport;
 use app\components\CourseStatus;
 use app\components\SafeRedirect;
 use app\components\SecureUpload;
@@ -77,7 +78,8 @@ class CoursesController extends Controller
                     [
                         'actions' => ['new', 'edit', 'edit-course', 'copy-course', 'report', 'members_report', 'unit-options',
                             'brokers', 'brokers1', 'broker_contracts', 'capacity', 'course_date', 'check-username',
-                            'show_course_users', 'delete_course', 'toggle-site', 'register-online', 'member-finance'],
+                            'show_course_users', 'delete_course', 'toggle-site', 'register-online', 'member-finance',
+                            'members-template', 'members-check', 'members-import'],
                         'allow' => true,
                         'roles' => ['@'],
                         'matchCallback' => function () use ($staff) {
@@ -101,6 +103,8 @@ class CoursesController extends Controller
                     'toggle-site' => ['post'],
                     'register-online' => ['post'],
                     'member-finance' => ['post'],
+                    'members-check' => ['post'],
+                    'members-import' => ['post'],
                 ],
             ],
         ];
@@ -286,10 +290,10 @@ class CoursesController extends Controller
         if ($courseDetail === null || !CourseAccess::canView($courseDetail))
             return $this->back('error', 'دوره یافت نشد یا به آن دسترسی ندارید', ['index']);
 
-        $searchModel = new CoursesMembers();
+        $searchModel = new CourseMembersSearch();
         $dataProvider = $searchModel->search(Yii::$app->request->queryParams, (string) $courseDetail->_id);
-        $dataProvider->pagination->pageSize = 50;
         return $this->render('edit-course', [
+            'memberStats' => CourseMembersSearch::stats((string) $courseDetail->_id),
             'colleges' => $this->selectableUnits(),
             'servers' => ClassroomServers::activeOptions(),
             'courseDetail' => $courseDetail,
@@ -486,48 +490,154 @@ class CoursesController extends Controller
         return $this->sendXlsx($writer, 'ShortCourses');
     }
 
+    /**
+     * خروجی اکسل اعضای دوره با همان فیلترهای تب «اعضا»: مشخصات، وضعیت، ثبت‌کننده، پرداخت و سهم‌ها، گواهی.
+     */
     public function actionMembers_report()
     {
         $course = $this->findCourse((string) Yii::$app->request->get('_id'));
         if ($course === null || !CourseAccess::canView($course))
             return $this->back('error', 'دوره یافت نشد یا به آن دسترسی ندارید');
         $courseId = (string) $course->_id;
-        $writer = new XlsxWriter(['ردیف', 'نام', 'نام خانوادگی', 'نام کاربری', 'کد ملی', 'ثبت کننده', 'وضعیت در دوره', 'وضعیت گواهی'], [7, 16, 20, 24, 14, 30, 22, 24]);
-        $query = Users::find()->select(['first_name', 'last_name', 'username', 'courses', 'issuance_certificate_information'])
-            ->where(['courses._id' => $courseId])->orderBy(['last_name' => SORT_ASC])->asArray();
+        $canSeeMoney = CourseAccess::canManage($course);
+        $headers = ['ردیف', 'نام', 'نام خانوادگی', 'نام انگلیسی', 'نام خانوادگی انگلیسی', 'نام کاربری', 'کد ملی', 'جنسیت', 'شماره تماس',
+            'وضعیت در دوره', 'درخواست انصراف', 'ثبت‌کننده', 'تاریخ عضویت در سامانه'];
+        $widths = [7, 14, 18, 14, 18, 22, 13, 8, 14, 18, 12, 28, 14];
+        if ($canSeeMoney) {
+            $headers = array_merge($headers, ['نوع پرداخت', 'کانال پرداخت', 'تاریخ پرداخت', 'مبلغ پرداختی (تومان)', 'سهم واحد (تومان)', 'سهم کارگزار (تومان)']);
+            $widths = array_merge($widths, [10, 16, 12, 16, 16, 16]);
+        }
+        $headers[] = 'وضعیت گواهی';
+        $widths[] = 20;
+        $writer = new XlsxWriter($headers, $widths);
+
+        $searchModel = new CourseMembersSearch();
+        $query = $searchModel->query(Yii::$app->request->queryParams, $courseId)
+            ->select(['first_name', 'last_name', 'username', 'courses', 'issuance_certificate_information'])
+            ->orderBy(['last_name' => SORT_ASC])->asArray();
         $certificates = [];
         foreach (\app\models\CertificateRequests::find()->select(['username', 'status'])->where(['course_id' => $courseId])->asArray()->all() as $request)
             $certificates[(string) $request['username']] = (string) $request['status'];
+        $str = function ($array, $key) {
+            return isset($array[$key]) && is_scalar($array[$key]) ? (string) $array[$key] : '';
+        };
         foreach ($query->batch(500) as $rows) {
             $registrantNames = [];
-            foreach ($rows as $row)
+            $usernames = [];
+            foreach ($rows as $row) {
+                $usernames[] = $str($row, 'username');
                 foreach ((array) (isset($row['courses']) ? $row['courses'] : []) as $item)
                     if (is_array($item) && isset($item['_id'], $item['registrant']) && (string) $item['_id'] === $courseId)
                         $registrantNames[] = $item['registrant'];
+            }
             $registrants = UsersDirectory::registrants($registrantNames);
+            // آخرین سفارش موفق هر عضو برای همین دوره
+            $orders = [];
+            if ($canSeeMoney)
+                foreach (\app\models\Orders::find()->where(['username' => $usernames, 'orders._id' => $courseId])->orderBy(['_id' => SORT_ASC])->all() as $order)
+                    if (StudentProfile::isSuccessfulOrder($order))
+                        $orders[(string) $order->username] = $order;
             foreach ($rows as $row) {
                 $item = [];
                 foreach ((array) (isset($row['courses']) ? $row['courses'] : []) as $c)
                     if (is_array($c) && isset($c['_id']) && (string) $c['_id'] === $courseId)
                         $item = $c;
-                $username = isset($row['username']) && is_scalar($row['username']) ? (string) $row['username'] : '';
-                $registrant = UsersDirectory::describeUsername(isset($item['registrant']) && is_scalar($item['registrant']) ? (string) $item['registrant'] : '', $username, $registrants);
+                $username = $str($row, 'username');
+                $registrant = UsersDirectory::describeUsername($str($item, 'registrant'), $username, $registrants);
                 $info = isset($row['issuance_certificate_information']) && is_array($row['issuance_certificate_information']) ? $row['issuance_certificate_information'] : [];
-                // بند ۷.۶ صورتجلسه: مشخص باشد چه کسانی گواهی گرفته‌اند
-                $certificate = isset($certificates[$username]) ? StudentProfile::certificateStatus($certificates[$username])[0] : 'درخواست نشده';
-                $writer->addRow([
+                $gender = $str($info, 'gender');
+                $line = [
                     $writer->rowCount() + 1,
-                    isset($row['first_name']) && is_scalar($row['first_name']) ? (string) $row['first_name'] : '',
-                    isset($row['last_name']) && is_scalar($row['last_name']) ? (string) $row['last_name'] : '',
+                    $str($row, 'first_name'),
+                    $str($row, 'last_name'),
+                    $str($info, 'first_name_en'),
+                    $str($info, 'last_name_en'),
                     $username,
-                    isset($info['id']) && is_scalar($info['id']) ? (string) $info['id'] : '',
-                    $registrant['name'] . ($registrant['roleLabel'] !== '' ? ' (' . $registrant['roleLabel'] . ')' : ''),
+                    $str($info, 'id'),
+                    $gender === '1' ? 'مرد' : ($gender === '0' ? 'زن' : ''),
+                    $str($info, 'phone'),
                     UsersDirectory::courseStatus(isset($item['status']) ? $item['status'] : '0')[0],
-                    $certificate,
-                ]);
+                    !empty($item['begin_deleted']) ? 'در انتظار' : '',
+                    $registrant['name'] . ($registrant['roleLabel'] !== '' ? ' (' . $registrant['roleLabel'] . ')' : ''),
+                    isset($row['_id']) ? UsersDirectory::jdate('Y/m/d', hexdec(substr((string) $row['_id'], 0, 8)), 'en') : '',
+                ];
+                if ($canSeeMoney) {
+                    $order = isset($orders[$username]) ? $orders[$username] : null;
+                    if ($order !== null) {
+                        list($type, $channel) = StudentProfile::paymentType($order);
+                        $shares = StudentProfile::shares($order);
+                        $line = array_merge($line, [$type, $channel, is_array($order->payment_info) ? $str($order->payment_info, 'date') : '',
+                            StudentProfile::orderPaidAmount($order), round($shares['college']), round($shares['broker'])]);
+                    } else {
+                        $line = array_merge($line, ['بدون پرداخت', '', '', '', '', '']);
+                    }
+                }
+                // بند ۷.۶ صورتجلسه: مشخص باشد چه کسانی گواهی گرفته‌اند
+                $line[] = isset($certificates[$username]) ? StudentProfile::certificateStatus($certificates[$username])[0] : 'درخواست نشده';
+                $writer->addRow($line);
             }
         }
         return $this->sendXlsx($writer, 'CourseMembers');
+    }
+
+    // ============================================== افزودن اعضا از اکسل
+
+    public function actionMembersTemplate()
+    {
+        $path = CourseMembersImport::template();
+        $response = Yii::$app->response->sendFile($path, 'course-members-template.xlsx');
+        $response->on(Response::EVENT_AFTER_SEND, function () use ($path) {
+            @unlink($path);
+        });
+        return $response;
+    }
+
+    /**
+     * بررسی فایل (AJAX): پیش‌نمایش ردیف‌ها، خطاها، شرایط دوره و هزینه. تا وقتی خطایی هست دکمه‌ی ثبت نیست.
+     */
+    public function actionMembersCheck($_id)
+    {
+        Yii::$app->response->format = Response::FORMAT_JSON;
+        $course = $this->findCourse((string) $_id);
+        if ($course === null || !CourseAccess::canManage($course))
+            return ['ok' => false, 'html' => Html::tag('div', 'دوره یافت نشد یا به آن دسترسی ندارید', ['class' => 'alert alert-danger'])];
+        $stored = CourseMembersImport::store(isset($_FILES['file']) ? $_FILES['file'] : null, (string) $course->_id);
+        if ($stored['error'] !== null)
+            return ['ok' => false, 'html' => Html::tag('div', Html::encode($stored['error']), ['class' => 'alert alert-danger'])];
+        $analysis = CourseMembersImport::analyze(CourseMembersImport::pathFor($stored['token'], (string) $course->_id), $course);
+        if (!$analysis['ok'])
+            CourseMembersImport::discard(); // با خطا امکان ثبت نیست؛ فایل اصلاح‌شده دوباره بارگذاری می‌شود
+        return [
+            'ok' => $analysis['ok'],
+            'html' => $this->renderPartial('_members-import-preview', [
+                'analysis' => $analysis,
+                'course' => $course,
+                'token' => $analysis['ok'] ? $stored['token'] : null,
+            ]),
+        ];
+    }
+
+    public function actionMembersImport($_id)
+    {
+        $course = $this->findCourse((string) $_id);
+        if ($course === null || !CourseAccess::canManage($course))
+            return $this->back('error', 'دوره یافت نشد یا به آن دسترسی ندارید');
+        $back = ['edit-course', '_id' => (string) $course->_id, 'tab' => 'tab-id2'];
+        $path = CourseMembersImport::pathFor(Yii::$app->request->post('token'), (string) $course->_id);
+        if ($path === null)
+            return $this->back('error', 'فایل بررسی‌شده پیدا نشد یا منقضی شده است؛ دوباره بارگذاری کنید', $back);
+        $mutex = Yii::$app->has('mutex') ? Yii::$app->mutex : null;
+        $lock = 'course-members-import-' . (string) $course->_id;
+        if ($mutex !== null && !$mutex->acquire($lock, 10))
+            return $this->back('error', 'ثبت دیگری برای این دوره در حال انجام است؛ چند لحظه بعد دوباره تلاش کنید', $back);
+        try {
+            $result = CourseMembersImport::import($path, $course);
+        } finally {
+            CourseMembersImport::discard();
+            if ($mutex !== null)
+                $mutex->release($lock);
+        }
+        return $this->back($result['ok'] ? (empty($result['failed']) ? 'success' : 'warning') : 'error', $result['message'], $back);
     }
 
     // ============================================== اکشن‌های کمکی فرم (سازگار با صفحه‌ی ویرایش)

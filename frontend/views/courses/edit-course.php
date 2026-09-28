@@ -318,50 +318,7 @@ $(document).on('click','#add_from-list',function(e) {
 JS;
 $this->registerJs($list);
 
-$excelUrl = Yii::$app->urlManager->createAbsoluteUrl('packages/check_excel_file','https');
-$excel = <<<JS
-$(document).on('click','#excel',function(e) {
-    e.preventDefault();
-    var \$btn = $(this);
-    var originalText = \$btn.html();
-    
-    \$btn.prop('disabled', true)
-        .removeClass('btn-primary')
-        .addClass('btn-secondary')
-        .html('<span class="spinner-border spinner-border-sm me-2" role="status"></span>در حال بررسی...');
-    var id = $('#packageId').val();
-    var fd = new FormData();
-    fd.append('file',$('#excel-file')[0].files[0]);
-    fd.append('packageId ',$('#packageId').val());
-    fd.append('_csrf', yii.getCsrfToken());
 
-    console.log(fd)
-    $.ajax({
-        url:'$excelUrl',
-        type:'POST',
-        processData: false,  // Don't process the data
-        contentType: false,  // Don't set content type
-        beforeSend: function (xhr) {
-            xhr.setRequestHeader('X-CSRF-Token', yii.getCsrfToken());
-        },
-        data:fd,
-        success:function(data) {
-            var main_data = JSON.parse(data);
-            $('#message').html(main_data.message);  
-            $('#final-ok').html(main_data.footer);  
-        },
-        error: function(xhr, status, error) {
-            $('#message').html('<div class="alert alert-danger">خطا در پردازش فایل</div>');
-        },
-        complete: function(){
-            // فعال کردن مجدد دکمه و بازگرداندن متن اصلی
-            \$btn.prop('disabled', false).html(originalText);
-            $('#ajax-loader').css("visibility", "hidden");
-        }
-    });
-});
-JS;
-$this->registerJs($excel);
 
 $url = Yii::$app->urlManager->createAbsoluteUrl('packages/show_course_lessons', 'https');
 $_csrf = Yii::$app->request->getCsrfToken();
@@ -1909,6 +1866,7 @@ $this->registerJs($digit);
                 <?php echo $this->render('_member_search', [
                     'model' => $searchModel,
                     'packageDetail' => $courseDetail,
+                    'stats' => $memberStats,
                 ]); ?>
                 <p><a href="<?= Yii::$app->urlManager->createAbsoluteUrl(['packages/recording-grades', '_id' => (string) $courseDetail->_id]) ?>">برای ثبت کلی نمرات اینجا کلیک کنید</a></p>
                 <div class="table-responsive text-nowrap">

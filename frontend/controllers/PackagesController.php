@@ -123,6 +123,18 @@ class PackagesController extends Controller
             return false;
         if (Yii::$app->user->isGuest)
             return true;
+        // افزودن عضو از اکسل برای دوره‌های کوتاه‌مدت فقط از مسیر جدید (courses/members-check) با همه‌ی کنترل‌ها
+        if (in_array($action->id, ['check_excel_file', 'add_user_from_exel'], true)) {
+            $id = Yii::$app->request->post('courseId', Yii::$app->request->post('packageId_', Yii::$app->request->post('packageId')));
+            $course = is_string($id) && preg_match('/^[a-f0-9]{24}$/i', trim($id)) ? Courses::findOne(trim($id)) : null;
+            if ($course === null || (string) $course->type === '1') {
+                if (Yii::$app->request->isAjax)
+                    throw new \yii\web\ForbiddenHttpException('برای دوره‌های کوتاه‌مدت از «افزودن از فایل اکسل» در صفحه‌ی دوره استفاده کنید');
+                Yii::$app->session->setFlash('status', '2');
+                $this->redirect(\app\components\SafeRedirect::referrer(['index']))->send();
+                return false;
+            }
+        }
         // کد تخفیف: هر کسی که دوره را مدیریت می‌کند (بررسی canManage پایین‌تر با Discounts[course_id]/Discounts[_id]).
         // سقف مبلغ (سهم کارگزار منهای ۵۰ هزار تومان) در Discounts::rules() اعمال می‌شود.
         if (in_array($action->id, ['add_discount', 'delete_discount'], true)) {
