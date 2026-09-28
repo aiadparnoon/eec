@@ -131,27 +131,14 @@ class ManageCourseContentsController extends Controller
 
     public function actionDownload_file($filename)
     {
-        // امنیتی: نام فایل مستقیم از درخواست می‌آید. بدون این بررسی، ورودی
-        // «../../config/main-local.php» کلید cookieValidationKey را برمی‌گرداند.
-        $path = \app\components\SecureFile::resolve('upload_center', $filename);
-        if($path === null)
-            throw new \yii\web\NotFoundHttpException('فایل مورد نظر پیدا نشد.');
-        return Yii::$app->response->sendFile($path, basename($path));
+        $storagePath = 'upload_center';
+        return Yii::$app->response->sendFile("$storagePath/$filename", $filename);
     }
 
     public function actionDownload_exercise($filename, $course_id, $assignment_id)
     {
-        // امنیتی: هر سه پارامتر از URL می‌آیند و همگی جزئی از مسیر می‌شوند،
-        // پس علاوه بر نام فایل، شناسه‌های دوره و تمرین هم اعتبارسنجی می‌شوند.
-        $courseId     = \app\components\SecureFile::segment($course_id);
-        $assignmentId = \app\components\SecureFile::segment($assignment_id);
-        if($courseId === null || $assignmentId === null)
-            throw new \yii\web\NotFoundHttpException('فایل مورد نظر پیدا نشد.');
-
-        $path = \app\components\SecureFile::resolve('user_assignments/' . $courseId . '/' . $assignmentId, $filename);
-        if($path === null)
-            throw new \yii\web\NotFoundHttpException('فایل مورد نظر پیدا نشد.');
-        return Yii::$app->response->sendFile($path, basename($path));
+        $storagePath = 'user_assignments/' . $course_id . '/' . $assignment_id;
+        return Yii::$app->response->sendFile("$storagePath/$filename", $filename);
     }
 
     public function actionFile($assignment_id, $course_id)
@@ -176,20 +163,8 @@ class ManageCourseContentsController extends Controller
             $response = curl_exec($curl);
             $response = json_decode($response);
             curl_close($curl);
-            // امنیتی: course_id و assignment_id از URL می‌آیند و data از پاسخ سرویس بیرونی؛
-            // هیچ‌کدام نباید مستقیم به مسیر فایل تبدیل شوند.
-            $courseId     = \app\components\SecureFile::segment($course_id);
-            $assignmentId = \app\components\SecureFile::segment($assignment_id);
-            if($courseId === null || $assignmentId === null)
-                throw new \yii\web\NotFoundHttpException('فایل مورد نظر پیدا نشد.');
-
-            $path = \app\components\SecureFile::resolve(
-                'user_assignments/' . $courseId . '/' . $assignmentId,
-                isset($response->data) ? $response->data : ''
-            );
-            if($path === null)
-                throw new \yii\web\NotFoundHttpException('فایل مورد نظر پیدا نشد.');
-            return Yii::$app->response->sendFile($path, basename($path));
+            $storagePath = 'user_assignments/' . $course_id . '/' . $assignment_id;
+            return Yii::$app->response->sendFile("$storagePath/$response->data", $response->data);
         }
     }
     public function actionNew_title()

@@ -153,58 +153,24 @@ class PackagesController extends Controller
 
     public function actionFile($filename)
     {
-        // امنیتی: نام فایل مستقیم از درخواست می‌آید. بدون این بررسی، ورودی
-        // «../../config/main-local.php» کلید cookieValidationKey را برمی‌گرداند.
-        $path = \app\components\SecureFile::resolve('upload_center', $filename);
-        if($path === null)
-            throw new \yii\web\NotFoundHttpException('فایل مورد نظر پیدا نشد.');
-        return Yii::$app->response->sendFile($path, basename($path));
+        $storagePath = 'upload_center';
+        return Yii::$app->response->sendFile("$storagePath/$filename", $filename);
     }
 
     public function actionContract_file($filename)
     {
-        // امنیتی: نام فایل مستقیم از درخواست می‌آید. بدون این بررسی، ورودی
-        // «../../config/main-local.php» کلید cookieValidationKey را برمی‌گرداند.
-        $path = \app\components\SecureFile::resolve('contract_files', $filename);
-        if($path === null)
-            throw new \yii\web\NotFoundHttpException('فایل مورد نظر پیدا نشد.');
-        return Yii::$app->response->sendFile($path, basename($path));
+        $storagePath = 'contract_files';
+        return Yii::$app->response->sendFile("$storagePath/$filename", $filename);
     }
 
     public function actionCreatePackage()
-    {
-        list($colleges, $capacityType) = $this->resolveCreatePackageOptions();
-        return $this->render('create-package', [
-            'colleges' => ArrayHelper::map($colleges, function ($model) {
-                return (string) $model->_id;
-            }, 'title'),
-            'myCollege' => $colleges,
-            'capacityType' => $capacityType
-        ]);
-    }
-
-    /**
-     * Builds the ($colleges, $capacityType) pair actionCreatePackage() needs for
-     * the "ثبت دوره جدید" (create-package) GET view. Extracted into its own
-     * method (2026-08-27) so actionNew()'s failure path (see below) can re-render
-     * the exact same form - with the user's already-typed data and the specific
-     * validation errors kept - instead of redirecting to a blank page, without
-     * duplicating this role-based logic in two places.
-     *
-     * "نامحدود" (unlimited) is intentionally left out of $capacityType here: new
-     * courses can no longer be created with that capacity type (existing courses
-     * that already have it keep working - see Courses::validateCapacityTypeNotDisabled()
-     * and edit-package.php).
-     *
-     * @return array [$colleges, $capacityType]
-     */
-    private function resolveCreatePackageOptions()
     {
         $capacityType = null;
         if (Yii::$app->user->identity->role == 'user' || Yii::$app->user->identity->role == 'cnt')
         {
             $colleges = Colleges::find()->all();
             $capacityType = array(
+                '1' => 'نامحدود',
                 '2' => 'محدود',
                 '3' => 'سازمانی'
             );
@@ -247,6 +213,7 @@ class PackagesController extends Controller
                 $capacityFlag = 1;
             if($capacityFlag == 0)
                 $capacityType = array(
+                    '1' => 'نامحدود',
                     '2' => 'محدود',
                     '3' => 'سازمانی'
                 );
@@ -255,7 +222,13 @@ class PackagesController extends Controller
                     '3' => 'سازمانی'
                 );
         }
-        return [$colleges, $capacityType];
+        return $this->render('create-package', [
+            'colleges' => ArrayHelper::map($colleges, function ($model) {
+                return (string) $model->_id;
+            }, 'title'),
+            'myCollege' => $colleges,
+            'capacityType' => $capacityType
+        ]);
     }
 
     public function actionEditPackage($_id)
@@ -267,66 +240,51 @@ class PackagesController extends Controller
             {
                 if($this->allow((string) $model->college))
                 {
-                    return $this->renderEditPackageView($model);
+                    if (Yii::$app->user->identity->role == 'user' || Yii::$app->user->identity->role == 'cnt')
+                    {
+                        $colleges = Colleges::find()->all();
+                        if ($model->lessons != null)
+                            if (count($model->lessons) > 0)
+                                $colleges = Colleges::find()->where(['_id' => $model->college])->all();
+                    }
+                    else
+                        $colleges = Colleges::find()->where(['_id' => Yii::$app->user->identity->college])->all();
+                    $teachers = Teachers::find()->where(['like', 'colleges', $model->college])->all();
+                    $collegeLessons = Lessons::find()->where(['college' => $model->college])->all();
+//                if($model->lessons != null)
+//                    $remainingLessons = Lessons::find()->where(['college' => $model->college])->andWhere(['NOT IN', (string)'_id', $model->my_lessons['_id']])->all();
+//                else
+                    $remainingLessons = Lessons::find()->where(['college' => $model->college])->all();
+                    $discounts = Discounts::find()->where(['course_id' => (string) $model->_id])->all();
+                    $searchModel = new CoursesMembers();
+                    $dataProvider = $searchModel->search(Yii::$app->request->queryParams, (string) $model->_id);
+                    $dataProvider->pagination->pageSize = 50;
+                    $courseFinancial = CoursesFinancial::find()->where(['course_id' => (string) $model->_id])->andWhere(['payment_info.status' => '2'])->orderBy(['_id'=>SORT_DESC])->all();
+                    $addRequests = OrganizationPayments::find()->where(['product_id' => (string) $model->_id])->all();
+                    $allowEdit = true;
+                    if(($model->status == '1' || $model->status == '6') && Yii::$app->user->identity->role != 'user' && Yii::$app->user->identity->role != 'cnt')
+                        $allowEdit = false;
+                    return $this->render('edit-package', [
+                        'colleges' => ArrayHelper::map($colleges, function ($model) {
+                            return (string) $model->_id;
+                        }, 'title'),
+                        'model' => $model,
+                        'teachers' => $teachers,
+                        'collegeLessons' => $collegeLessons,
+                        'remainingLessons' => ArrayHelper::map($remainingLessons, function ($model) {
+                            return (string) $model->_id;
+                        }, 'title'),
+                        'searchModel' => $searchModel,
+                        'dataProvider' => $dataProvider,
+                        'discounts' => $discounts,
+                        'allowEdit' => $allowEdit,
+                        'courseFinancial' => $courseFinancial,
+                        'addRequests' => $addRequests
+                    ]);
                 }
             }
         }
         return $this->redirect(['../packages']);
-    }
-
-    /**
-     * Builds every piece of data the "edit-package" view needs and renders it
-     * for the given $model. Extracted out of actionEditPackage() (2026-08-27)
-     * so actionEdit()'s failure path (see below) can re-render the exact same
-     * form - with whatever the admin just typed still in place and the specific
-     * validation error shown under the right field - instead of redirecting
-     * back to a page that silently re-fetches the OLD, unedited record. The
-     * normal GET flow (actionEditPackage) is unchanged: it still does its own
-     * access check (`$this->allow(...)`) before calling this.
-     */
-    private function renderEditPackageView(Courses $model)
-    {
-        if (Yii::$app->user->identity->role == 'user' || Yii::$app->user->identity->role == 'cnt')
-        {
-            $colleges = Colleges::find()->all();
-            if ($model->lessons != null)
-                if (count($model->lessons) > 0)
-                    $colleges = Colleges::find()->where(['_id' => $model->college])->all();
-        }
-        else
-            $colleges = Colleges::find()->where(['_id' => Yii::$app->user->identity->college])->all();
-        $teachers = Teachers::find()->where(['like', 'colleges', $model->college])->all();
-        $collegeLessons = Lessons::find()->where(['college' => $model->college])->all();
-//                if($model->lessons != null)
-//                    $remainingLessons = Lessons::find()->where(['college' => $model->college])->andWhere(['NOT IN', (string)'_id', $model->my_lessons['_id']])->all();
-//                else
-        $remainingLessons = Lessons::find()->where(['college' => $model->college])->all();
-        $discounts = Discounts::find()->where(['course_id' => (string) $model->_id])->all();
-        $searchModel = new CoursesMembers();
-        $dataProvider = $searchModel->search(Yii::$app->request->queryParams, (string) $model->_id);
-        $dataProvider->pagination->pageSize = 50;
-        $courseFinancial = CoursesFinancial::find()->where(['course_id' => (string) $model->_id])->andWhere(['payment_info.status' => '2'])->orderBy(['_id'=>SORT_DESC])->all();
-        $addRequests = OrganizationPayments::find()->where(['product_id' => (string) $model->_id])->all();
-        $allowEdit = true;
-        if(($model->status == '1' || $model->status == '6') && Yii::$app->user->identity->role != 'user' && Yii::$app->user->identity->role != 'cnt')
-            $allowEdit = false;
-        return $this->render('edit-package', [
-            'colleges' => ArrayHelper::map($colleges, function ($m) {
-                return (string) $m->_id;
-            }, 'title'),
-            'model' => $model,
-            'teachers' => $teachers,
-            'collegeLessons' => $collegeLessons,
-            'remainingLessons' => ArrayHelper::map($remainingLessons, function ($m) {
-                return (string) $m->_id;
-            }, 'title'),
-            'searchModel' => $searchModel,
-            'dataProvider' => $dataProvider,
-            'discounts' => $discounts,
-            'allowEdit' => $allowEdit,
-            'courseFinancial' => $courseFinancial,
-            'addRequests' => $addRequests
-        ]);
     }
 
     public function actionCopyPackage($_id)
@@ -708,28 +666,10 @@ class PackagesController extends Controller
             if(isset($_POST['Courses']['lessons']))
             {
                 $model = new Courses();
-                $model->scenario = Courses::SCENARIO_CREATE_PACKAGE;
                 $model->load(Yii::$app->request->post());
                 if(isset($_POST['Courses']['broker']))
                     if(Yii::$app->request->post()['Courses']['broker']['_id'] == null || Yii::$app->request->post()['Courses']['broker']['_id'] == '')
                         $model->broker = null;
-                // اقساط (اگه کاربر توی فرم شرایط اقساطی اضافه کرده باشه) - قبلاً
-                // اینجا نبود؛ بعد از اولین $model->save() موفق ست می‌شد و توی
-                // یک save() دومِ بدون هیچ چک خطایی ذخیره می‌شد (یعنی اگه همون
-                // save دوم به هر دلیلی fail می‌شد - مثلاً به خاطر ولیدیشن‌های
-                // جدید تغییر ۵ - کاربر پیغام موفقیت می‌دید ولی اقساط واقعاً
-                // ذخیره نمی‌شد). با انتقال این بخش به همینجا (قبل از همون
-                // save اولی که پایین‌تر با validate واقعی و مسیر
-                // renderCreatePackageErrors() چک می‌شه)، اعتبارسنجی اقساط
-                // (Courses::validateInstallmentsAgainstCourse) دقیقاً مثل
-                // بقیه‌ی فیلدهای فرم عمل می‌کنه - بدون تغییر در رفتار قبلیِ
-                // موفقیت‌آمیز. (2026-08-28)
-                if(isset($_POST['installments']) && isset($_POST['Courses']['prepayment_installments']))
-                    if($_POST['Courses']['prepayment_installments'] != '')
-                    {
-                        $model->installments = Yii::$app->request->post('installments');
-                        $model->prepayment_installments = $_POST['Courses']['prepayment_installments'];
-                    }
                 $model->preview_image = uniqid() . '.jpg';
                 $model->type = '2';
                 $model->credit = '0';
@@ -847,8 +787,12 @@ class PackagesController extends Controller
                     // Call AdobeConnect For Create Meetings Course
 //                        if($model->discount_price == '')
 //                            $model->discount_price = $model->price;
-                    // اقساط حالا قبل از اولین save() ست می‌شن (بالاتر) - همونجا
-                    // هم با validate واقعی چک می‌شن؛ اینجا دیگه لازم نیست.
+                    if(isset($_POST['installments']) && isset($_POST['Courses']['prepayment_installments']))
+                        if($_POST['Courses']['prepayment_installments'] != '')
+                        {
+                            $model->installments = Yii::$app->request->post('installments');
+                            $model->prepayment_installments = $_POST['Courses']['prepayment_installments'];
+                        }
                     $model->save();
                     if($model->adobe_status === '0')
                         Yii::$app->session->setFlash('status', '11');
@@ -856,36 +800,12 @@ class PackagesController extends Controller
                         Yii::$app->session->setFlash('status', '1');
                 }
                 else
-                {
-                    // اعتبارسنجی fail شد: به‌جای ریدایرکت به لیست دوره‌ها (که فرم و
-                    // پیغام‌های خطا رو گم می‌کرد)، همون فرم رو با دقیقاً همون
-                    // اطلاعاتی که کاربر وارد کرده بود و خطاهای دقیق هر فیلد دوباره
-                    // نشون می‌دیم. (2026-08-27)
-                    return $this->renderCreatePackageErrors($model);
-                }
+                    Yii::$app->session->setFlash('status', '2');
             }
             else
                 Yii::$app->session->setFlash('status','3');
         }
         return $this->redirect(['../packages']);
-    }
-
-    /**
-     * Re-renders "create-package" after a failed save with $model's validation
-     * errors and already-typed values intact. Uses the same option-building
-     * helper the normal GET view uses, so the dropdowns are always consistent.
-     */
-    private function renderCreatePackageErrors(Courses $model)
-    {
-        list($colleges, $capacityType) = $this->resolveCreatePackageOptions();
-        return $this->render('create-package', [
-            'colleges' => ArrayHelper::map($colleges, function ($m) {
-                return (string) $m->_id;
-            }, 'title'),
-            'myCollege' => $colleges,
-            'capacityType' => $capacityType,
-            'model' => $model,
-        ]);
     }
 
     public function actionEdit()
@@ -897,7 +817,6 @@ class PackagesController extends Controller
                 if ($_FILES['Courses']['size']['preview_image'] <= Yii::getAlias('@uploadSize'))
                 {
                     $preImage = $find->preview_image;
-                    $find->scenario = Courses::SCENARIO_EDIT_PACKAGE;
                     $find->load(Yii::$app->request->post());
                     if ($_FILES['Courses']['name']['preview_image'] != '')
                     {
@@ -944,13 +863,8 @@ class PackagesController extends Controller
                             // Calculating the member registration deadline
                             Yii::$app->session->setFlash('status', '1');
                         }
-                    } else {
-                        // اعتبارسنجی fail شد: به‌جای ریدایرکت (که رکورد قدیمی رو
-                        // دوباره از دیتابیس می‌خوند و همه‌چیز رو گم می‌کرد)، همون
-                        // فرم رو با دقیقاً همون تغییراتی که کاربر داده بود و
-                        // خطاهای دقیق هر فیلد دوباره نشون می‌دیم. (2026-08-27)
-                        return $this->renderEditPackageView($find);
-                    }
+                    } else
+                        Yii::$app->session->setFlash('status', '2');
                 }
                 else
                     Yii::$app->session->setFlash('status', '18');
@@ -1028,11 +942,7 @@ class PackagesController extends Controller
                     'prompt' => 'لطفا مدرس را انتخاب کنید',
                     'class' => 'select2 form-select',
                     'id' => '',
-                    'required' => true,
-                    // اصلاح ۲۰۲۶-۰۸-۲۸: بدون این، پیغام پیش‌فرض مرورگر انگلیسی بود
-                    // (همون باگی که برای فیلد دانشکده در create-package.php اصلاح شد).
-                    'oninvalid' => 'this.setCustomValidity(\'لطفا مدرس را انتخاب کنید\')',
-                    'oninput' => 'setCustomValidity(\'\')',
+                    'required' => true
                 ]
             )->label(false);
             $teachers = ob_get_contents();
@@ -1152,11 +1062,7 @@ class PackagesController extends Controller
                     'prompt' => 'لطفا مدرس را انتخاب کنید',
                     'class' => 'select2 form-select',
                     'id' => '',
-                    'required' => true,
-                    // اصلاح ۲۰۲۶-۰۸-۲۸: بدون این، پیغام پیش‌فرض مرورگر انگلیسی بود
-                    // (همون باگی که برای فیلد دانشکده در create-package.php اصلاح شد).
-                    'oninvalid' => 'this.setCustomValidity(\'لطفا مدرس را انتخاب کنید\')',
-                    'oninput' => 'setCustomValidity(\'\')',
+                    'required' => true
                 ]
             )->label(false);
             $teachers = ob_get_contents();
@@ -1186,9 +1092,7 @@ class PackagesController extends Controller
                     'class' => 'select2 form-select',
                     'id' => 'lessons',
                     'required' => true,
-                    'multiple' => true,
-                    'oninvalid' => 'this.setCustomValidity(\'لطفا حداقل یک درس را انتخاب کنید\')',
-                    'oninput' => 'setCustomValidity(\'\')',
+                    'multiple' => true
                 ]
             )->label(false);
             $lessons = ob_get_contents();
@@ -1225,9 +1129,7 @@ class PackagesController extends Controller
                     'prompt' => 'لطفا قرارداد کارگزار را انتخاب کنید',
                     'class' => 'select2 form-select',
                     'id' => '',
-                    'required' => true,
-                    'oninvalid' => 'this.setCustomValidity(\'لطفا قرارداد کارگزار را انتخاب کنید\')',
-                    'oninput' => 'setCustomValidity(\'\')',
+                    'required' => true
                 ]
             )->label(false);
         }
@@ -1247,18 +1149,12 @@ class PackagesController extends Controller
                 ]
             );
             echo '<label for="nameWithTitle" class="form-label">ظرفیت *</label>';
-            // تغییر ۱ (2026-08-28): بدون oninvalid/oninput، مرورگر برای این
-            // فیلد پیغام پیش‌فرض انگلیسی نشون می‌داد (بر خلاف همه‌ی فیلدهای
-            // دیگه‌ی همین فرم که این پیغام رو دارن) - همون الگوی موجود پروژه
-            // (نه یک روش تازه) روی این فیلد هم اعمال شده.
             echo $form->field($model, 'student_capacity[number]')->textInput(
                 [
 
                     'class' => 'form-control numeral-mask text-start',
                     'required' => true,
-                    'type' => 'number',
-                    'oninvalid' => 'this.setCustomValidity(\'لطفا ظرفیت را به صورت عددی وارد کنید\')',
-                    'oninput' => 'setCustomValidity(\'\')',
+                    'type' => 'number'
                 ]
             )->label(false);
         }
@@ -1418,12 +1314,7 @@ class PackagesController extends Controller
                             [
                                 'prompt' => 'لطفا استاد درس را انتخاب کنید',
                                 'class' => 'select2 form-select',
-                                'required' => true,
-                                // اصلاح ۲۰۲۶-۰۸-۲۸: این دقیقاً فیلد «استاد» بود که بدون oninvalid
-                                // پیغام پیش‌فرض انگلیسی مرورگر رو نشون می‌داد - برخلاف فیلدهای
-                                // تاریخ/ساعت همین کارت که oninvalid دارن.
-                                'oninvalid' => 'this.setCustomValidity(\'لطفا استاد درس را انتخاب کنید\')',
-                                'oninput' => 'setCustomValidity(\'\')',
+                                'required' => true
                                 //                            'multiple' => true
                             ]
                         )->label(false) . '
@@ -1499,8 +1390,6 @@ class PackagesController extends Controller
                                 'class' => 'form-control text-start',
                                 'required' => true,
                                 'id' => '',
-                                'oninvalid' => 'this.setCustomValidity(\'لطفا وضعیت مخفی کردن آرشیو را مشخص کنید\')',
-                                'oninput' => 'setCustomValidity(\'\')',
                             ]
                         )->label(false)
                         . '
@@ -2156,8 +2045,6 @@ class PackagesController extends Controller
             $i = 0;
             $j = 1;
             $validRows = 0; // شمارنده سطرهای معتبر
-            $rowErrors = array(); // ایرادهای هر سطر (کلید = شماره سطر در فایل اکسل)
-            $errorRowsCount = 0; // تعداد سطرهایی که حداقل یک ایراد دارند
 
             if ($sheetData != null) {
                 ob_start();
@@ -2165,20 +2052,13 @@ class PackagesController extends Controller
                 echo '<div class="mt-3">';
                 echo '<div class="btn-group" role="group" aria-label="Basic example">';
 
-                // شمارش سطرهای معتبر و بررسی صحت اطلاعات هر سطر
-                foreach ($sheetData as $rowKey => $data) {
+                // شمارش سطرهای معتبر
+                foreach ($sheetData as $data) {
                     if ($j != 1) { // رد کردن هدر
                         if ($this->isValidRow($data))
                         {
                             if($data['A'] != '' && $data['B'] != '' && $data['C'] != '' && $data['D'] != '')
                                 $validRows++;
-
-                            $cellErrors = $this->getExcelRowErrors($data);
-                            if (count($cellErrors) > 0)
-                            {
-                                $rowErrors[$rowKey] = $cellErrors;
-                                $errorRowsCount++;
-                            }
                         }
                     }
                     $j++;
@@ -2186,9 +2066,7 @@ class PackagesController extends Controller
 
                 echo '<button class="btn btn-secondary">تعداد کاربران موجود در فایل: ' . $validRows . ' نفر می باشد</button>';
                 $form = ActiveForm::begin(['action' => ['add_user_from_exel']]);
-                if($errorRowsCount > 0)
-                    echo '<button type="button" class="btn btn-success" disabled>افزودن نهایی به دوره</button>';
-                else if($validRows > 0)
+                if($validRows > 0)
                 {
                     if(($brokerWallet >= ($finalCourseCollegeShare * $validRows)) || ($allowFree == true))
                         echo '<button type="submit" class="btn btn-success">افزودن نهایی به دوره</button>';
@@ -2202,8 +2080,6 @@ class PackagesController extends Controller
                 ActiveForm::end();
                 echo '</div>';
                 echo '</div>';
-                if($errorRowsCount > 0)
-                    echo '<div class="alert alert-danger m-3" role="alert">سطرهایی که با رنگ قرمز مشخص شده است را تصحیح کنید تا اجازه ثبت نهایی فایل را داشته باشید. (' . $errorRowsCount . ' سطر ایراد دارد - برای دیدن علت ایراد، نشانگر ماوس را روی خانه های قرمز پررنگ نگه دارید)</div>';
                 echo '<h5 class="card-header heading-color">تعداد کاربر: ' . $validRows . '</h5>';
                 echo '<div class="table-responsive text-nowrap" id="tbl">';
                 echo '<table class="table">';
@@ -2213,7 +2089,7 @@ class PackagesController extends Controller
                 $j = 1;
                 $displayIndex = 1;
 
-                foreach ($sheetData as $rowKey => $data) {
+                foreach ($sheetData as $data) {
                     if ($j++ != 1) { // رد کردن هدر
                         // فقط سطرهای معتبر رو نمایش بده
                         if ($this->isValidRow($data)) {
@@ -2232,23 +2108,15 @@ class PackagesController extends Controller
                                     $gender = 'مرد';
                             }
 
-                            // ایرادهای همین سطر (اگر خالی نباشد، پس زمینه سطر قرمز می شود)
-                            $cellErrors = isset($rowErrors[$rowKey]) ? $rowErrors[$rowKey] : array();
-                            $rowClass = count($cellErrors) > 0 ? ' class="table-danger"' : '';
-
-                            // اگر جنسیت ایراد دارد، مقدار خام فایل نمایش داده شود تا کاربر متوجه اشتباه شود
-                            if (isset($cellErrors['G']) && isset($data['G']) && trim((string) $data['G']) !== '')
-                                $gender = $data['G'];
-
-                            echo '<tr' . $rowClass . '>';
-                            echo '<td' . $this->excelCellStyle($cellErrors, null) . '><span class="badge badge-center bg-label-secondary">' . $displayIndex . '</span></td>';
-                            echo '<td' . $this->excelCellStyle($cellErrors, 'A') . '>' . $data['A'] . '</td>';
-                            echo '<td' . $this->excelCellStyle($cellErrors, 'B') . '>' . $data['B'] . '</td>';
-                            echo '<td' . $this->excelCellStyle($cellErrors, 'C') . '>' . $data['C'] . '</td>';
-                            echo '<td' . $this->excelCellStyle($cellErrors, 'D') . '>' . $data['D'] . '</td>';
-                            echo '<td' . $this->excelCellStyle($cellErrors, 'E') . '>' . $firstNameEn . '</td>';
-                            echo '<td' . $this->excelCellStyle($cellErrors, 'F') . '>' . $lastNameEn . '</td>';
-                            echo '<td' . $this->excelCellStyle($cellErrors, 'G') . '>' . $gender . '</td>';
+                            echo '<tr>';
+                            echo '<td><span class="badge badge-center bg-label-secondary">' . $displayIndex . '</span></td>';
+                            echo '<td>' . $data['A'] . '</td>';
+                            echo '<td>' . $data['B'] . '</td>';
+                            echo '<td>' . $data['C'] . '</td>';
+                            echo '<td>' . $data['D'] . '</td>';
+                            echo '<td>' . $firstNameEn . '</td>';
+                            echo '<td>' . $lastNameEn . '</td>';
+                            echo '<td>' . $gender . '</td>';
                             echo '</tr>';
 
                             $displayIndex++;
@@ -2576,65 +2444,6 @@ class PackagesController extends Controller
             (isset($data['C']) && !empty(trim($data['C']))) || // نام کاربری
             (isset($data['D']) && !empty(trim($data['D'])))    // کد ملی
         );
-    }
-
-    /**
-     * بررسی صحت اطلاعات یک سطر از فایل اکسل افزودن کاربر
-     * خروجی: آرایه ای از ستون های ایرادار به همراه علت ایراد
-     * (اگر آرایه خالی باشد یعنی سطر هیچ ایرادی ندارد)
-     */
-    private function getExcelRowErrors($data)
-    {
-        $errors = array();
-
-        $firstName = isset($data['A']) ? trim((string) $data['A']) : '';
-        $lastName  = isset($data['B']) ? trim((string) $data['B']) : '';
-        $username  = isset($data['C']) ? trim((string) $data['C']) : '';
-        $password  = isset($data['D']) ? trim((string) $data['D']) : '';
-        $gender    = isset($data['G']) ? trim((string) $data['G']) : '';
-
-        // ۱- فیلدهای اجباری
-        if ($firstName === '')
-            $errors['A'] = 'نام وارد نشده است';
-        if ($lastName === '')
-            $errors['B'] = 'نام خانوادگی وارد نشده است';
-        if ($password === '')
-            $errors['D'] = 'کد ملی (رمز عبور) وارد نشده است';
-
-        // ۲- نام کاربری: یا فقط عدد لاتین (شماره همراه) باشد یا اگر حروف انگلیسی دارد، ایمیل معتبر باشد
-        if ($username === '')
-            $errors['C'] = 'نام کاربری وارد نشده است';
-        else if (preg_match('/[A-Za-z]/', $username) === 1)
-        {
-            if (filter_var($username, FILTER_VALIDATE_EMAIL) === false)
-                $errors['C'] = 'نام کاربری حروف انگلیسی دارد، پس باید فرمت ایمیل معتبر داشته باشد';
-        }
-        else if (preg_match('/^[0-9]+$/', $username) !== 1)
-            $errors['C'] = 'نام کاربری باید فقط عدد لاتین (شماره همراه) یا یک ایمیل معتبر باشد';
-
-        // ۳- جنسیت: اجباری و فقط عدد ۱ (مرد) یا ۲ (زن)
-        if ($gender === '')
-            $errors['G'] = 'جنسیت وارد نشده است';
-        else if (in_array($gender, array('1', '2', '۱', '۲'), true) === false)
-            $errors['G'] = 'جنسیت فقط می تواند عدد ۱ (مرد) یا ۲ (زن) باشد';
-
-        return $errors;
-    }
-
-    /**
-     * ساخت style و tooltip خانه های جدول بررسی فایل اکسل
-     * خانه ای که خودش ایراد دارد قرمز پررنگ و همراه با علت ایراد نمایش داده می شود
-     * و بقیه خانه های همان سطر قرمز کمرنگ می شوند
-     */
-    private function excelCellStyle($cellErrors, $column)
-    {
-        if (count($cellErrors) == 0)
-            return '';
-
-        if ($column !== null && isset($cellErrors[$column]))
-            return ' style="background-color:#ffb1b1;" title="' . htmlspecialchars($cellErrors[$column], ENT_QUOTES, 'UTF-8') . '"';
-
-        return ' style="background-color:#ffdede;"';
     }
 
     public function actionMembers_report()
@@ -3482,20 +3291,6 @@ class PackagesController extends Controller
         return $this->redirect(Yii::$app->request->referrer);
     }
 
-    /**
-     * برمی‌گردونه اولین پیغام خطای واقعیِ یک مدل (برای فلش‌های اعتبارسنجی
-     * جدید تغییر ۶/۷/۹/۱۰ - 2026-08-28)، تا کاربر دقیقاً بفهمه چرا رد شده،
-     * نه یک پیغام کلی «خطایی رخ داده است».
-     */
-    private function firstModelErrorMessage($model)
-    {
-        $errors = $model->getFirstErrors();
-        if (!empty($errors)) {
-            return reset($errors);
-        }
-        return 'اطلاعات وارد شده معتبر نیست';
-    }
-
     public function actionAdd_installment()
     {
         if(Yii::$app->request->isPost)
@@ -3509,22 +3304,12 @@ class PackagesController extends Controller
                     'amount' => Yii::$app->request->post('amount')
                 );
                 $installments['0'] = $newInstallment;
-                // تغییر ۶ (2026-08-28): همون قانون Yii2 Validation که برای
-                // create-package هست (Courses::validateInstallmentsAgainstCourse)
-                // اینجا هم دوباره‌استفاده شده - نه یک قانون تازه. اسکوپ اعتبارسنجی
-                // فقط روی «installments» نگه داشته شده (نه کل سناریوی
-                // edit-package) تا فیلدهای بی‌ربط این درخواست (قیمت، ظرفیت، نوع
-                // دوره) که اصلاً توی این فرم وجود ندارن هیچ‌وقت اینجا چک نشن.
-                $course->scenario = Courses::SCENARIO_EDIT_PACKAGE;
                 $course->prepayment_installments = Yii::$app->request->post('prepayment_installments');
                 $course->installments = $installments;
-                if($course->validate(['installments']) && $course->save(false))
+                if($course->save())
                     Yii::$app->session->setFlash('status','19');
                 else
-                {
-                    Yii::$app->session->setFlash('status','35');
-                    Yii::$app->session->setFlash('installmentError', $this->firstModelErrorMessage($course));
-                }
+                    Yii::$app->session->setFlash('status','2');
             }
         }
         return $this->redirect(Yii::$app->request->referrer);
@@ -3539,29 +3324,24 @@ class PackagesController extends Controller
             {
                 if($course->prepayment_installments != null && $course->prepayment_installments != '')
                 {
-                    $installments = $course->installments;
-                    $newInstallment = array(
-                        'deadline' => Yii::$app->request->post('deadline'),
-                        'amount' => Yii::$app->request->post('amount')
-                    );
-                    array_push($installments, $newInstallment);
-                    // تغییر ۶/۷ (2026-08-28): قبلاً اینجا فقط تاریخ با مقایسه‌ی
-                    // رشته‌ای دستی چک می‌شد (بدون اینکه required بودن یا مجموع
-                    // مبلغ اقساط نسبت به قیمت دوره اصلاً بررسی بشه). حالا همون
-                    // ولیدیتور واقعی مدل (Courses::validateInstallmentsAgainstCourse)
-                    // که هر سه قانون (الزامی بودن، تاریخ، مجموع مبلغ) رو با هم
-                    // چک می‌کنه، عیناً استفاده شده - دقیقاً همون قانون تاریخی که
-                    // از قبل اینجا بود («مساوی مجاز، بیشتر غیرمجاز») هم داخلش
-                    // حفظ شده.
-                    $course->scenario = Courses::SCENARIO_EDIT_PACKAGE;
-                    $course->installments = $installments;
-                    if($course->validate(['installments']) && $course->save(false))
-                        Yii::$app->session->setFlash('status','20');
-                    else
+                    $date = str_replace('-','',Yii::$app->request->post('deadline'));
+                    $courseDate = str_replace('-','',$course->date['to']);
+                    if($date <= $courseDate)
                     {
-                        Yii::$app->session->setFlash('status','35');
-                        Yii::$app->session->setFlash('installmentError', $this->firstModelErrorMessage($course));
+                        $installments = $course->installments;
+                        $newInstallment = array(
+                            'deadline' => Yii::$app->request->post('deadline'),
+                            'amount' => Yii::$app->request->post('amount')
+                        );
+                        array_push($installments, $newInstallment);
+                        $course->installments = $installments;
+                        if($course->save())
+                            Yii::$app->session->setFlash('status','20');
+                        else
+                            Yii::$app->session->setFlash('status','2');
                     }
+                    else
+                        Yii::$app->session->setFlash('status','33');
                 }
             }
         }
@@ -3980,17 +3760,10 @@ class PackagesController extends Controller
                 $model->code = substr(md5(uniqid(mt_rand(), true)), 0, 8);
                 $model->used = null;
                 $model->registrant = Yii::$app->user->identity->username;
-                // تغییر ۹/۱۰ (2026-08-28): مبلغ و تعداد از طریق Discounts::rules()
-                // الزامی و فقط-عدد-انگلیسی هستن، و مبلغ نباید از سهم کارگزار
-                // (با همون فرمول موجود پروژه) بیشتر باشه. اگه رد بشه، پیغام
-                // دقیق خطا (نه فقط «خطایی رخ داده») به کاربر نشون داده می‌شه.
                 if($model->save())
                     Yii::$app->session->setFlash('status','26');
                 else
-                {
-                    Yii::$app->session->setFlash('status','34');
-                    Yii::$app->session->setFlash('discountError', $this->firstModelErrorMessage($model));
-                }
+                    Yii::$app->session->setFlash('status','2');
             }
         }
         return $this->redirect(Yii::$app->request->referrer);

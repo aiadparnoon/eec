@@ -47,7 +47,7 @@ class CertificateManageController extends Controller
                         'roles' => ['?'],
                     ],
                     [
-                        'actions' => ['index', 'report', 'add_serial', 'report1','view-requests','print-certificate' ,'new-print-certificate','issued-certificates','course-members','cities','complete_profile','show_profile_form','add_single_request','confirm_request','change_preview','file','check-serial-number'],
+                        'actions' => ['index', 'report', 'add_serial', 'report1','view-requests','print-certificate' ,'new-print-certificate','issued-certificates','course-members','cities','complete_profile','show_profile_form','add_single_request','confirm_request','change_preview','file','check-serial-number','change_digital_cert'],
                         'allow' => true,
                         'roles' => ['@'],
                         'matchCallback' => function ($rule, $action) {
@@ -150,11 +150,9 @@ class CertificateManageController extends Controller
 
     public function actionFile($filename)
     {
-        // امنیتی: نام فایل مستقیم از درخواست می‌آید. بدون این بررسی، ورودی
-        // «../../config/main-local.php» کلید cookieValidationKey را برمی‌گرداند.
-        $path = \app\components\SecureFile::resolve('certificate_files', $filename);
-        if($path !== null)
-            return Yii::$app->response->sendFile($path, basename($path));
+        $storagePath = 'certificate_files';
+        if(file_exists("$storagePath/$filename"))
+            return Yii::$app->response->sendFile("$storagePath/$filename", $filename);
         else
         {
             Yii::$app->session->setFlash('status','7');
@@ -410,8 +408,8 @@ class CertificateManageController extends Controller
     {
         if(isset($_GET['_id']))
         {
-//            $requests = CertificateRequests::find()->where(['course_id' => $_id])->all();
-            $users = Users::find()->where(['courses._id' => $_id])->orderBy(['_id'=>SORT_DESC])->all();
+            $requests = CertificateRequests::find()->where(['course_id' => $_id])->orderBy(['username'=>SORT_DESC])->all();
+            $users = Users::find()->where(['courses._id' => $_id])->orderBy(['last_name'=>SORT_ASC])->all();
             if($users != null)
             {
                 $courseDetail = Courses::findOne($_id);
@@ -427,7 +425,7 @@ class CertificateManageController extends Controller
                     'license' => $license,
                     'license2' => $license2,
                     'general' => $general,
-//                    'requests' => $requests,
+                    'requests' => $requests,
                     'users' => $users,
                 ]);
             }
@@ -439,8 +437,8 @@ class CertificateManageController extends Controller
     {
         if(isset($_GET['_id']))
         {
-//            $requests = CertificateRequests::find()->where(['course_id' => $_id])->all();
-            $users = Users::find()->where(['courses._id' => $_id])->orderBy(['_id'=>SORT_DESC])->all();
+            $requests = CertificateRequests::find()->where(['course_id' => $_id])->orderBy(['username'=>SORT_DESC])->all();
+            $users = Users::find()->where(['courses._id' => $_id])->orderBy(['last_name'=>SORT_ASC])->all();
             if($users != null)
             {
                 $courseDetail = Courses::findOne($_id);
@@ -456,7 +454,7 @@ class CertificateManageController extends Controller
                     'license' => $license,
                     'license2' => $license2,
                     'general' => $general,
-//                    'requests' => $requests,
+                    'requests' => $requests,
                     'users' => $users,
                 ]);
             }
@@ -486,6 +484,11 @@ class CertificateManageController extends Controller
     public function user_detail($username)
     {
         return Users::find()->where(['username' => $username])->one();
+    }
+
+    public function find_user($_id)
+    {
+        return Users::findOne($_id);
     }
     public function course_detail($_id)
     {
@@ -1079,14 +1082,38 @@ class CertificateManageController extends Controller
         if(Yii::$app->request->isPost)
         {
             $course = Courses::findOne(Yii::$app->request->post('_id'));
-           if($course != null)
-           {
-               $course->load(Yii::$app->request->post());
-               if($course->save())
-                   Yii::$app->session->setFlash('status','5');
-               else
-                   Yii::$app->session->setFlash('status','2');
-           }
+            if($course != null)
+            {
+                $course->load(Yii::$app->request->post());
+                if($course->save())
+                    Yii::$app->session->setFlash('status','5');
+                else
+                    Yii::$app->session->setFlash('status','2');
+            }
+        }
+        return $this->redirect(Yii::$app->request->referrer);
+    }
+
+    public function actionChange_digital_cert()
+    {
+        if(Yii::$app->request->isPost)
+        {
+            $course = Courses::findOne(Yii::$app->request->post()['Courses']['_id']);
+            if($course != null)
+            {
+                $digital_cert_state = false;
+                if($course->digital_cert != null)
+                    if($course->digital_cert == true)
+                        $digital_cert_state = true;
+                if($digital_cert_state)
+                    $course->digital_cert = false;
+                else
+                    $course->digital_cert = true;
+                if($course->save())
+                    Yii::$app->session->setFlash('status','8');
+                else
+                    Yii::$app->session->setFlash('status','2');
+            }
         }
         return $this->redirect(Yii::$app->request->referrer);
     }

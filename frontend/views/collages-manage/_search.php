@@ -27,7 +27,7 @@ use yii\widgets\ActiveForm;
             <?php
             echo $form->field($model, 'title')->textInput(
                 [
-                    'placeholder' => 'فیلتر بر اساس نام واحد',
+                    'placeholder' => 'فیلتر بر اساس نام دانشکده',
                     'class' => 'form-control form-control-sm',
                     'id' => '',
                     'data-allow-clear' => true

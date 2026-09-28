@@ -1277,15 +1277,6 @@ $this->registerJs($digit);
                                         'required' => true,
                                         'oninvalid' => 'this.setCustomValidity(\'لطفا نوع دوره را مشخص کنید\')',
                                         'oninput' => 'setCustomValidity(\'\')',
-                                        // اصلاح ۲۰۲۶-۰۸-۲۸ (طبق درخواست کاربر «دقیق با همون شکل و قوانین دوره‌های
-                                        // میان‌مدت»): عیناً همون الگوی packages/edit-package.php - گزینه‌ی
-                                        // «محتوا محور» فقط وقتی این دوره از قبل همین مقدار رو نداشته غیرفعال
-                                        // می‌شه، تا هم دوره‌های قدیمی محتوا محور درست نمایش داده بشن، هم امکان
-                                        // انتخاب‌مجددِ این گزینه برای بقیه از UI هم مسدود بشه (سمت سرور هم توسط
-                                        // Courses::validateContentTypeNotDisabled() تضمین می‌شه).
-                                        'options' => [
-                                            Courses::CONTENT_TYPE_CONTENT_BASED => ['disabled' => $courseDetail->content_type !== Courses::CONTENT_TYPE_CONTENT_BASED],
-                                        ],
                                     ]
                                 )->label(false);
                             else
@@ -1303,12 +1294,6 @@ $this->registerJs($digit);
                                         'required' => true,
                                         'oninvalid' => 'this.setCustomValidity(\'لطفا نوع ظرفیت دوره را مشخص کنید\')',
                                         'oninput' => 'setCustomValidity(\'\')',
-                                        // اصلاح ۲۰۲۶-۰۸-۲۸: عیناً همون الگوی packages/edit-package.php - گزینه‌ی
-                                        // «نامحدود» فقط وقتی این دوره از قبل همین مقدار رو نداشته غیرفعال می‌شه
-                                        // (سمت سرور هم توسط Courses::validateCapacityTypeNotDisabled() تضمین می‌شه).
-                                        'options' => [
-                                            Courses::CAPACITY_TYPE_UNLIMITED => ['disabled' => (isset($courseDetail->student_capacity['type']) ? $courseDetail->student_capacity['type'] : null) !== Courses::CAPACITY_TYPE_UNLIMITED],
-                                        ],
                                         'onchange' => '
                                                                                         $.get( "' . Url::toRoute('/courses/capacity') . '", { id: $(this).val() } )
                                                                                         .done(function( data ) {
@@ -1325,22 +1310,7 @@ $this->registerJs($digit);
                             ?>
                         </div>
                         <?php
-                        // اصلاح ۲۰۲۶-۰۸-۲۸ (طبق بازخورد کاربر: «توی صفحه‌ی ویرایش هم درستش کن»):
-                        // بررسی دقیق نشون داد که در این صفحه (بر خلاف صفحه‌ی ثبت دوره) فیلد شماره‌ی
-                        // ظرفیت از طریق PHP سمت سرور و بر اساس مقدار واقعیِ ذخیره‌شده‌ی دوره رندر
-                        // می‌شه، نه از طریق AJAX روی رویداد onchange - پس برای رکوردهای موجود با
-                        // نوع ظرفیت «محدود» (۲) از همون ابتدای لود صفحه به‌درستی نمایش داده می‌شه
-                        // (تست زنده روی رکورد واقعی این مورد رو تائید کرد). با این‌حال، برای
-                        // هم‌خوانی کامل با نسخه‌ی «فقط خواندنی» بالاتر (خط بالاتر که با isset از
-                        // notice جلوگیری می‌کنه) و برای محکم‌کاری در برابر حالت فرضیِ نامعتبر
-                        // (نبودِ کلید type)، همین بررسیِ ایمن با isset این‌جا هم اضافه شد - بدون
-                        // هیچ تغییری در نتیجه‌ی نمایش برای داده‌های معتبر فعلی. توجه: عمداً از روش
-                        // «trigger کردن onchange در لحظه‌ی لود» که در صفحه‌ی ثبت دوره استفاده شد
-                        // این‌جا استفاده نشد، چون اون روش با فراخوانی AJAX به /courses/capacity
-                        // یک مدلِ کاملاً خالی و تازه می‌سازه و مقدار ظرفیتِ واقعیِ همین دوره (که
-                        // همین الان به‌درستی نمایش داده شده) رو با یک فیلد خالی جایگزین می‌کنه -
-                        // یعنی همون کاری که این‌جا لازمه دقیقاً برعکسشه: نگه‌داشتنِ مقدار موجود.
-                        if ((isset($courseDetail->student_capacity['type']) ? $courseDetail->student_capacity['type'] : null) == 2) {
+                        if ($courseDetail->student_capacity['type'] == 2) {
                         ?>
                             <div class="col-1 col-md-1 col-sm-12 dol-lg-1 col-xl-1 mb-3" id="capacity">
                                 <label for="nameWithTitle" class="form-label">ظرفیت *</label>
@@ -1351,9 +1321,7 @@ $this->registerJs($digit);
 
                                             'class' => 'form-control numeral-mask text-start',
                                             'required' => true,
-                                            'type' => 'number',
-                                            'oninvalid' => 'this.setCustomValidity(\'لطفا ظرفیت دوره را وارد کنید\')',
-                                            'oninput' => 'setCustomValidity(\'\')',
+                                            'type' => 'number'
                                         ]
                                     )->label(false);
                                 else if(isset($courseDetail->student_capacity['number']))
@@ -1496,8 +1464,6 @@ $this->registerJs($digit);
                                     'required' => true,
                                     'data-allow-clear' => true,
                                     "data" => "colleges",
-                                    'oninvalid' => 'this.setCustomValidity(\'لطفا دانشکده را مشخص کنید\')',
-                                    'oninput' => 'setCustomValidity(\'\')',
                                     'onchange' => '
                                                             $.get( "' . Url::toRoute('/courses/brokers') . '", { id: $(this).val() } )
                                                             .done(function( data ) {
@@ -1579,9 +1545,7 @@ $this->registerJs($digit);
                                                     'prompt' => 'لطفا قرارداد کارگزار را انتخاب کنید',
                                                     'class' => 'select2s form-select',
                                                     'id' => '',
-                                                    'required' => true,
-                                                    'oninvalid' => 'this.setCustomValidity(\'لطفا قرارداد کارگزار را انتخاب کنید\')',
-                                                    'oninput' => 'setCustomValidity(\'\')',
+                                                    'required' => true
                                                 ]
                                             )->label(false);
                                         else
@@ -1614,9 +1578,7 @@ $this->registerJs($digit);
                                             'prompt' => 'لطفا درس را انتخاب کنید',
                                             'class' => 'select2 form-select',
                                             'id' => '',
-                                            'required' => true,
-                                            'oninvalid' => 'this.setCustomValidity(\'لطفا درس را انتخاب کنید\')',
-                                            'oninput' => 'setCustomValidity(\'\')',
+                                            'required' => true
                                         ]
                                     )->label(false);
                                     ?>
@@ -1644,9 +1606,7 @@ $this->registerJs($digit);
                                         $hiddenArchive,
                                         [
                                             'id' => '',
-                                            'required' => true,
-                                            'oninvalid' => 'this.setCustomValidity(\'لطفا وضعیت مخفی کردن آرشیو را مشخص کنید\')',
-                                            'oninput' => 'setCustomValidity(\'\')',
+                                            'required' => true
                                         ]
                                     )->label(false);
                                     ?>
@@ -1676,8 +1636,6 @@ $this->registerJs($digit);
                                             'class' => 'select2 form-select',
                                             'id' => '',
                                             'required' => true,
-                                            'oninvalid' => 'this.setCustomValidity(\'لطفا مدرس را انتخاب کنید\')',
-                                            'oninput' => 'setCustomValidity(\'\')',
                                         ]
                                     )->label(false);
                                 } else {

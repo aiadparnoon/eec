@@ -83,6 +83,14 @@ JS;
             "closeButton": "true"
         });
 JS;
+    else if (Yii::$app->session->get('status') == '8')
+        $script = <<< JS
+    toastr.success("وضعیت صدور گواهی دیجیتال تغییر یافت", {
+            positionClass: "toast-top-center",
+            containerId: "toast-top-center",
+            "closeButton": "true"
+        });
+JS;
 
     $this->registerJs($script);
     Yii::$app->session->remove('status');
@@ -94,9 +102,7 @@ $type = array(
 
 ?>
 <?php
-// آدرس نسبی (root-relative) تا AJAX همیشه روی همان scheme و host صفحه‌ی جاری برود؛
-// createAbsoluteUrl(..., 'https') روی سرور محلی که http است باعث شکست درخواست می‌شد.
-$url = Yii::$app->urlManager->createUrl('certificate-manage/show_profile_form');
+$url = Yii::$app->urlManager->createAbsoluteUrl('certificate-manage/show_profile_form', 'https');
 $_csrf = Yii::$app->request->getCsrfToken();
 $show_off = <<<JS
 $(document).on('click','.show-profile-form',function(e) {

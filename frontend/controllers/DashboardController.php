@@ -3,7 +3,6 @@ namespace frontend\controllers;
 use app\models\Members;
 use common\models\Admin;
 use MongoDB\BSON\ObjectId;
-use yii\helpers\ArrayHelper;
 use PHPExcel_IOFactory;
 use Yii;
 use yii\filters\VerbFilter;
@@ -110,85 +109,12 @@ class DashboardController extends \common\component\Controller
         $dataProvider->pagination->pageSize = 50;
         $userDetail = $this->user_detail();
         $allPrintedCertificate = CertificateRequests::find()->where(['<>', 'serial_number', null])->count();
-
-        // فیلتر بخش «دوره های در انتظار بررسی» (طبق درخواست ۲۰۲۶-۰۸-۲۸):
-        // همون فیلدهای فیلتر لیست دوره‌های بلندمدت (packages/_search.php) -
-        // نام دوره، کد مجوز، نوع دوره، دانشکده، کارگزار - به‌همراه فیلتر
-        // «از تاریخ / تا تاریخ» (بر اساس timestamp توکاررفته توی _id، دقیقاً
-        // همون تکنیکِ CoursesSearch::search()) اینجا هم اضافه شده - با
-        // نام‌های GET جدا (پیشوند pending_) که با پارامترهای فرم CoursesSearch
-        // بالای همین صفحه تداخلی نداره. فیلتر «وضعیت» عمداً اضافه نشده، چون
-        // این بخش خودش ذاتاً فقط دوره‌های status=2 رو نشون می‌ده.
-        $pendingRegDateFrom = Yii::$app->request->get('pending_reg_date_from');
-        $pendingRegDateTo = Yii::$app->request->get('pending_reg_date_to');
-        $pendingTitle = Yii::$app->request->get('pending_title');
-        $pendingLicenseCode = Yii::$app->request->get('pending_license_code');
-        $pendingContentType = Yii::$app->request->get('pending_content_type');
-        $pendingCollege = Yii::$app->request->get('pending_college');
-        $pendingBroker = Yii::$app->request->get('pending_broker');
-        $pendingQuery = Courses::find()->where(['status' => '2']);
-        $pendingQuery->andFilterWhere(['like', 'title.main_fa', $pendingTitle])
-            ->andFilterWhere(['like', 'license_code', $pendingLicenseCode])
-            ->andFilterWhere(['like', 'content_type', $pendingContentType])
-            ->andFilterWhere(['like', 'college', $pendingCollege])
-            ->andFilterWhere(['like', 'broker._id', $pendingBroker]);
-        if ($pendingRegDateFrom !== null && trim((string) $pendingRegDateFrom) !== '') {
-            $parts = explode('-', $pendingRegDateFrom);
-            if (count($parts) === 3) {
-                $g = jalali_to_gregorian($parts[0], $parts[1], $parts[2]);
-                $ts = strtotime($g[0] . '-' . $g[1] . '-' . $g[2]); // ابتدای همون روز
-                if ($ts !== false) {
-                    $pendingQuery->andWhere(['>=', '_id', new ObjectId(dechex($ts) . '0000000000000000')]);
-                }
-            }
-        }
-        if ($pendingRegDateTo !== null && trim((string) $pendingRegDateTo) !== '') {
-            $parts = explode('-', $pendingRegDateTo);
-            if (count($parts) === 3) {
-                $g = jalali_to_gregorian($parts[0], $parts[1], $parts[2]);
-                $ts = strtotime($g[0] . '-' . $g[1] . '-' . $g[2]);
-                if ($ts !== false) {
-                    $ts += 86399; // انتهای همون روز (23:59:59)
-                    $pendingQuery->andWhere(['<=', '_id', new ObjectId(dechex($ts) . '0000000000000000')]);
-                }
-            }
-        }
-
-        // گزینه‌های دراپ‌داونِ «دانشکده» و «کارگزار» برای همون فرم فیلتر -
-        // فقط وقتی لازمه (نقش user) ساخته می‌شن تا برای بقیه‌ی نقش‌ها بار
-        // اضافه‌ای روی دیتابیس نذاره.
-        $pendingColleges = [];
-        $pendingBrokers = [];
-        if (Yii::$app->user->identity->role == 'user') {
-            // (همون الگوی موجودِ پروژه برای map کردن دانشکده‌ها - مثلاً
-            // ManageFinancialController - چون _id از نوع MongoDB\BSON\ObjectId
-            // هست و باید صریحاً به رشته تبدیل بشه، وگرنه به‌عنوان کلید آرایه
-            // قابل استفاده نیست.)
-            $pendingColleges = ArrayHelper::map(Colleges::find()->all(), function ($model) {
-                return (string) $model->_id;
-            }, 'title');
-            $pendingBrokers = ArrayHelper::map(
-                Brokers::find()->orderBy(['_id' => SORT_DESC])->all(),
-                function ($model) { return (string) $model->_id; },
-                function ($model) { return $model->connector_info['first_name'] . ' ' . $model->connector_info['last_name']; }
-            );
-        }
-
         return $this->render('index',[
             'fullName' => $userDetail['fullName'],
             'role' => $userDetail['role'],
             'profile' => $userDetail['profile'],
             'user' => Yii::$app->user->identity,
-            'coursesPending' => $pendingQuery->orderBy(['_id'=>SORT_DESC])->all(),
-            'pendingRegDateFrom' => $pendingRegDateFrom,
-            'pendingRegDateTo' => $pendingRegDateTo,
-            'pendingTitle' => $pendingTitle,
-            'pendingLicenseCode' => $pendingLicenseCode,
-            'pendingContentType' => $pendingContentType,
-            'pendingCollege' => $pendingCollege,
-            'pendingBroker' => $pendingBroker,
-            'pendingColleges' => $pendingColleges,
-            'pendingBrokers' => $pendingBrokers,
+            'coursesPending' => Courses::find()->where(['status' => '2'])->orderBy(['_id'=>SORT_DESC])->all(),
             'searchModel' => $searchModel,
             'dataProvider' => $dataProvider,
             'allPrintedCertificate' => $allPrintedCertificate,
@@ -981,11 +907,26 @@ class DashboardController extends \common\component\Controller
 
     public function actionTest2()
     {
-        $orders = Orders::find()->where(['shares.broker' => '65a515cbf53a75071f0648f2'])->andWhere(['status' => '2'])->all();
-        $amount = 0;
-        foreach ($orders as $order)
-            $amount += $order->amount;
-        echo number_format($amount);
+        $query = Users::find()
+            ->where([
+                'courses' => ['$exists' => true, '$ne' => []]
+            ])->andWhere(['<>','from','fmut']);
+        foreach ($query->batch(500) as $users) {
+
+            foreach ($users as $user)
+            {
+               $course = Courses::findOne($user->courses[0]['_id']);
+               if($course != null)
+               {
+                   $user->college = $course->college;
+                   if($user->save())
+                       echo $user->username.' Save...<br>';
+                   else
+                       echo $user->username.' Not Save...<br>';
+               }
+            }
+
+        }
     }
 
     public function actionFullReport()

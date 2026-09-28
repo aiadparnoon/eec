@@ -192,18 +192,7 @@ JS;
                             <td><?= $teacher->first_name ?></td>
                             <td><?= $teacher->last_name ?></td>
                             <td><?= $teacher->mobile ?></td>
-                            <?php
-                            // امنیتی: کد ملی استاد در حال حاضر رمز عبور حساب او هم هست
-                            // (TeacherManageController.php خط ۱۹۷: setPassword($model->id)).
-                            // چون این ستون برای نقش broker هم قابل مشاهده بود، نمایش کامل آن
-                            // یعنی در اختیار گذاشتن رمز عبور. فقط چهار رقم آخر نمایش داده می شود
-                            // که برای تشخیص استاد کافی است ولی رمز را لو نمی دهد.
-                            $nationalCode = $teacher->id === null ? '' : (string) $teacher->id;
-                            $maskedCode = mb_strlen($nationalCode) > 4
-                                ? str_repeat('•', mb_strlen($nationalCode) - 4) . mb_substr($nationalCode, -4)
-                                : '-';
-                            ?>
-                            <td><?= \yii\helpers\Html::encode($maskedCode) ?></td>
+                            <td><?= $teacher->id ?></td>
                             <?php
                             if (Yii::$app->user->identity->role == 'user') {
                             ?>
@@ -386,12 +375,7 @@ JS;
                                             ]
                                         ); ?>
                                         <?= $form->field($teacher, '_id')->hiddenInput()->label(false); ?>
-                                        <?php
-                                        // امنیتی: مقدار کد ملی از این متن حذف شد. این مودال برای هر استاد
-                                        // در سورس صفحه رندر می شود، پس چاپ کد ملی اینجا همان رمز عبور را
-                                        // در HTML صفحه لو می داد - حتی اگر مودال هیچ وقت باز نشود.
-                                        ?>
-                                        <p>آیا از بازنشانی رمز عبور <?= $teacherGender . ' ' . $teacher->first_name . ' ' . $teacher->last_name ?> به کد ملی وی اطمینان دارید؟</p>
+                                        <p>آیا از بازنشانی رمز عبور <?= $teacherGender . ' ' . $teacher->first_name . ' ' . $teacher->last_name ?> به کد ملی وی (<?= $teacher->id ?>) اطمبنان دارید؟</p>
                                     </div>
                                     <div class="modal-footer">
                                         <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">

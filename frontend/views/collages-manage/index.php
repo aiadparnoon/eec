@@ -1,5 +1,5 @@
 <?php
-$this->title = 'مدیریت واحد';
+$this->title = 'مدیریت دانشکده';
 
 use yii\helpers\Html;
 use yii\widgets\ActiveForm;
@@ -14,7 +14,7 @@ if(Yii::$app->session->has('status'))
 {
     if(Yii::$app->session->getFlash('status') == '1')
         $script = <<< JS
-    toastr.success("واحد مورد نظر ثبت گردید", {
+    toastr.success("دانشکده مورد نظر ثبت گردید", {
             positionClass: "toast-top-center",
             containerId: "toast-top-center",
             "closeButton": "true"
@@ -30,7 +30,7 @@ JS;
 JS;
     else if(Yii::$app->session->getFlash('status') == '3')
         $script = <<< JS
-    toastr.warning("عنوان واحد وارد شده تکراری می باشد", {
+    toastr.warning("عنوان دانشکده وارد شده تکراری می باشد", {
             positionClass: "toast-top-center",
             containerId: "toast-top-center",
             "closeButton": "true"
@@ -38,7 +38,7 @@ JS;
 JS;
     else if(Yii::$app->session->getFlash('status') == '4')
         $script = <<< JS
-    toastr.success("واحد مورد نظر ویرایش گردید", {
+    toastr.success("دانشکده مورد نظر ویرایش گردید", {
             positionClass: "toast-top-center",
             containerId: "toast-top-center",
             "closeButton": "true"
@@ -73,7 +73,7 @@ JS;
     <nav aria-label="breadcrumb">
         <ol class="lh-1-85 breadcrumb breadcrumb-style1">
             <li class="breadcrumb-item">
-                <a href="javascript:void(0);"> مدیریت واحد </a>
+                <a href="javascript:void(0);"> مدیریت دانشکده </a>
             </li>
         </ol>
     </nav>
@@ -82,9 +82,9 @@ JS;
     ]); ?>
     <div class="card">
         <div class="card-header d-flex justify-content-between align-items-center">
-            <h5 class="card-title mb-0">واحد های ثبت شده</h5>
+            <h5 class="card-title mb-0">دانشکده های ثبت شده</h5>
             <button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#modalCenter">
-                <span class="tf-icons fa-solid fa-square-plus me-1"></span>ثبت واحد جدید
+                <span class="tf-icons fa-solid fa-square-plus me-1"></span>ثبت دانشکده جدید
             </button>
         </div>
         <div class="table-responsive text-nowrap">
@@ -96,8 +96,8 @@ JS;
                     <thead>
                         <tr class="text-nowrap">
                             <th>#</th>
-                            <th>لوگو واحد</th>
-                            <th>عنوان واحد</th>
+                            <th>لوگو دانشکده</th>
+                            <th>عنوان دانشکده</th>
                             <th>کد مجوز</th>
                             <th>عملیات</th>
                         </tr>
@@ -114,7 +114,7 @@ JS;
                                 <th scope="row"><?= $dataProvider->pagination->page * 30 + $i++ ?></th>
                                 <td>
                                     <div class="avatar avatar-lg me-2">
-                                        <img src="<?= $front.'/college_logos/'.$college->logo ?>" alt="واحد <?= $college->title ?>" class="rounded-circle">
+                                        <img src="<?= $front.'/college_logos/'.$college->logo ?>" alt="دانشکده <?= $college->title ?>" class="rounded-circle">
                                     </div>
                                 </td>
                                 <td><?= Html::encode($college->title) ?></td>
@@ -133,7 +133,7 @@ JS;
                                 <div class="modal-dialog modal-lg" role="document">
                                     <div class="modal-content">
                                         <div class="modal-header">
-                                            <h5 class="modal-title secondary-font" id="modalCenterTitle">ویرایش واحد <?= Html::encode($college->title) ?></h5>
+                                            <h5 class="modal-title secondary-font" id="modalCenterTitle">ویرایش دانشکده <?= Html::encode($college->title) ?></h5>
                                             <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                                         </div>
                                         <div class="modal-body">
@@ -150,7 +150,7 @@ JS;
                                             <?= $form->field($college, '_id')->hiddenInput()->label(false); ?>
                                             <div class="row">
                                                 <div class="col-4 col-md-4 col-sm-12 dol-lg-4 col-xl-4 mb-3">
-                                                    <label for="nameWithTitle" class="form-label">عنوان واحد *</label>
+                                                    <label for="nameWithTitle" class="form-label">عنوان دانشکده *</label>
                                                     <?= $form->field($college, 'title')->textInput(
                                                         [
                                                             'class' => 'form-control text-start',
@@ -269,7 +269,7 @@ JS;
                                                                 ]
                                                             )->label(false); ?>
                                                             <span class="drop-title"></span>
-                                                            <span class="note needsclick">تصویر لوگوی واحد </span>
+                                                            <span class="note needsclick">تصویر لوگوی دانشکده </span>
                                                         </div>
                                                     </div>
                                                 </div>
@@ -294,7 +294,7 @@ JS;
                                             <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">
                                                 بستن
                                             </button>
-                                            <button type="submit" class="btn btn-primary">ویرایش واحد</button>
+                                            <button type="submit" class="btn btn-primary">ویرایش دانشکده</button>
                                             <?php ActiveForm::end(); ?>
                                         </div>
                                     </div>
@@ -304,7 +304,7 @@ JS;
                                 <div class="modal-dialog modal-lg" role="document">
                                     <div class="modal-content">
                                         <div class="modal-header">
-                                            <h5 class="modal-title secondary-font" id="modalCenterTitle">گزارش سالانه دوره های واحد <?= Html::encode($college->title) ?></h5>
+                                            <h5 class="modal-title secondary-font" id="modalCenterTitle">گزارش سالانه دوره های دانشکده <?= Html::encode($college->title) ?></h5>
                                             <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                                         </div>
                                         <div class="modal-body">
@@ -382,7 +382,7 @@ JS;
             ?>
                 <div class="card">
                     <div class="card-body">
-                        <div class="alert alert-danger" role="alert">تا کنون واحد ای ثبت نشده است</div>
+                        <div class="alert alert-danger" role="alert">تا کنون دانشکده ای ثبت نشده است</div>
                     </div>
                 </div>
             <?php
@@ -396,7 +396,7 @@ JS;
     <div class="modal-dialog modal-lg" role="document">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title secondary-font" id="modalCenterTitle">ثبت واحد جدید</h5>
+                <h5 class="modal-title secondary-font" id="modalCenterTitle">ثبت دانشکده جدید</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
@@ -412,7 +412,7 @@ JS;
                 ); ?>
                 <div class="row">
                     <div class="col-4 col-md-4 col-sm-12 dol-lg-4 col-xl-4 mb-3">
-                        <label for="nameWithTitle" class="form-label">عنوان واحد *</label>
+                        <label for="nameWithTitle" class="form-label">عنوان دانشکده *</label>
                         <?= $form->field($model, 'title')->textInput(
                             [
                                 'class' => 'form-control text-start',
@@ -533,7 +533,7 @@ JS;
                                     ]
                                 )->label(false); ?>
                                 <span class="drop-title"></span>
-                                <span class="note needsclick">تصویر لوگوی واحد *</span>
+                                <span class="note needsclick">تصویر لوگوی دانشکده *</span>
                             </div>
                         </div>
                     </div>
@@ -558,7 +558,7 @@ JS;
                 <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">
                     بستن
                 </button>
-                <button type="submit" class="btn btn-primary">ثبت واحد</button>
+                <button type="submit" class="btn btn-primary">ثبت دانشکده</button>
                 <?php ActiveForm::end(); ?>
             </div>
         </div>

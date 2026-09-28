@@ -112,12 +112,8 @@ class ManageBrokersController extends Controller
 
     public function actionFile($filename)
     {
-        // امنیتی: نام فایل مستقیم از درخواست می‌آید. بدون این بررسی، ورودی
-        // «../../config/main-local.php» کلید cookieValidationKey را برمی‌گرداند.
-        $path = \app\components\SecureFile::resolve('broker_files', $filename);
-        if($path === null)
-            throw new \yii\web\NotFoundHttpException('فایل مورد نظر پیدا نشد.');
-        return Yii::$app->response->sendFile($path, basename($path));
+        $storagePath = 'broker_files';
+        return Yii::$app->response->sendFile("$storagePath/$filename", $filename);
     }
 
     public function actionCreateLegalBroker()

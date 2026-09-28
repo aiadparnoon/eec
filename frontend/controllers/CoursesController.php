@@ -111,83 +111,8 @@ class CoursesController extends Controller
                 return (string) $model->_id;
             }, 'title'),
             'myCollege' => $colleges,
-            'brokers' => $brokers,
-            'capacityType' => $this->resolveCreateCourseCapacityType()
+            'brokers' => $brokers
         ]);
-    }
-
-    /**
-     * گزینه‌های "نوع ظرفیت" برای Modal «ثبت دوره تک درس» (دوره‌های کوتاه‌مدت) -
-     * دقیقاً همون منطق role/financial_info-based
-     * PackagesController::resolveCreatePackageOptions() (دوره‌های میان‌مدت) اینجا
-     * هم پیاده شده (طبق درخواست صریح ۲۰۲۶-۰۸-۲۸: «فیلد نوع ظرفیت مثل دوره‌های
-     * میان‌مدت ۲ تا گزینه داشته باشه»). «نامحدود» دیگر برای دوره‌های جدید
-     * قابل‌انتخاب نیست - رکوردهای قدیمی که از قبل این مقدار رو دارن دست
-     * نمی‌خوره (نگاه کنید Courses::validateCapacityTypeNotDisabled()).
-     *
-     * توجه: بخش broker این متد عیناً همون کد resolveCreatePackageOptions() رو
-     * تکرار می‌کنه - شامل همون $flag/$capacityFlag که در شاخه‌ی broker با هم
-     * فرق دارن؛ این عیناً رفتار فعلی دوره‌های میان‌مدت هست و برای حفظ «قوانین
-     * دقیقاً یکسان با میان‌مدت» تغییر داده نشده (تغییرش باعث می‌شد رفتار این
-     * دو نوع دوره از هم متفاوت بشه).
-     *
-     * @return array|null
-     */
-    private function resolveCreateCourseCapacityType()
-    {
-        $capacityType = null;
-        if (Yii::$app->user->identity->role == 'user' || Yii::$app->user->identity->role == 'cnt')
-        {
-            $capacityType = array(
-                '2' => 'محدود',
-                '3' => 'سازمانی'
-            );
-        }
-        if (Yii::$app->user->identity->role == 'emp' || Yii::$app->user->identity->role == 'broker')
-        {
-            $capacityFlag = 0;
-            $collegeDetail = Colleges::findOne(Yii::$app->user->identity->college);
-            if ($collegeDetail != null)
-            {
-                if (Yii::$app->user->identity->role == 'emp')
-                {
-                    if ($collegeDetail->financial_info == null)
-                        $capacityFlag = 1;
-                    else if ($collegeDetail->financial_info['id'] == '')
-                        $capacityFlag = 1;
-                }
-                else if (Yii::$app->user->identity->role == 'broker')
-                {
-                    if ($collegeDetail->financial_info == null)
-                        $capacityFlag = 1;
-                    else if ($collegeDetail->financial_info['id'] == '')
-                        $capacityFlag = 1;
-                    else
-                    {
-                        $broker = Brokers::find()->where(['connector_info.mobile' => Yii::$app->user->identity->username])->one();
-                        if ($broker != null)
-                        {
-                            if ($broker->financial_info == null)
-                                $flag = 1;
-                            else if ($broker->financial_info['id'] == '')
-                                $flag = 1;
-                        }
-                    }
-                }
-            }
-            else
-                $capacityFlag = 1;
-            if ($capacityFlag == 0)
-                $capacityType = array(
-                    '2' => 'محدود',
-                    '3' => 'سازمانی'
-                );
-            else
-                $capacityType = array(
-                    '3' => 'سازمانی'
-                );
-        }
-        return $capacityType;
     }
 
     public function actionCheckUsername()
@@ -330,13 +255,6 @@ class CoursesController extends Controller
             //            $find = Courses::find()->where(['mobile' => Yii::$app->request->post()['Teachers']['mobile']])->one();
             if (true) {
                 $model = new Courses();
-                // اصلاح ۲۰۲۶-۰۸-۲۸ (طبق سند بررسی دوره‌های کوتاه‌مدت، بخش ۲۰/۲۹): قبلاً این
-                // مدل در سناریوی پیش‌فرض ذخیره می‌شد که هیچ قانون required/فرمتی روش اجرا
-                // نمی‌شد (فقط 'safe'). حالا با تنظیم سناریوی مخصوص دوره کوتاه‌مدت، دقیقاً
-                // همون فیلدهایی که در Modal هم required‌ان (دانشکده، قیمت، زمان، محل، نوع
-                // دوره، مدت، ظرفیت، عنوان، و درسِ انتخاب‌شده) سمت سرور هم اعتبارسنجی می‌شن —
-                // مستقل از اینکه فرانت‌اند چی فرستاده (بخش ۲۳ سند: UI Restriction ≠ Security).
-                $model->scenario = Courses::SCENARIO_CREATE_COURSE;
                 $model->load(Yii::$app->request->post());
                 $model->type = '1';
                 if (Yii::$app->user->identity->role == 'user' || $model->college == '663b1d28c9c6ce2e65073e22')
@@ -471,9 +389,6 @@ class CoursesController extends Controller
                 if(isset($_POST['Courses']['lessons'][0]['date']['time']))
                     $time = Yii::$app->request->post()['Courses']['lessons'][0]['date']['time'];
                 $find->load(Yii::$app->request->post());
-                // اصلاح ۲۰۲۶-۰۸-۲۸: مشابه actionNew()، سناریوی مخصوص ویرایش دوره کوتاه‌مدت
-                // فعال می‌شه تا همون فیلدهای required فرم ویرایش سمت سرور هم چک بشن.
-                $find->scenario = Courses::SCENARIO_EDIT_COURSE;
                 if($find->status == '4')
                     $find->status = '2';
                 if ($find->save())
@@ -731,9 +646,7 @@ class CoursesController extends Controller
                     'class' => 'select2 form-select',
                     'id' => '',
                     "onChange" => "$('.submit-course-btn').attr('disabled', false)",
-                    'required' => true,
-                    'oninvalid' => 'this.setCustomValidity(\'لطفا مدرس را انتخاب کنید\')',
-                    'oninput' => 'setCustomValidity(\'\')',
+                    'required' => true
                 ]
             )->label(false);
             $teachers = ob_get_contents();
@@ -762,9 +675,7 @@ class CoursesController extends Controller
                     'prompt' => 'لطفا درس را انتخاب کنید',
                     'class' => 'select2 form-select',
                     'id' => 'lessons'.rand(),
-                    'required' => true,
-                    'oninvalid' => 'this.setCustomValidity(\'لطفا درس را انتخاب کنید\')',
-                    'oninput' => 'setCustomValidity(\'\')',
+                    'required' => true
                 ]
             )->label(false);
             $lessons = ob_get_contents();
@@ -785,9 +696,7 @@ class CoursesController extends Controller
                 $hiddenArchive,
                 [
                     'id' => '',
-                    'required' => true,
-                    'oninvalid' => 'this.setCustomValidity(\'لطفا وضعیت مخفی کردن آرشیو را مشخص کنید\')',
-                    'oninput' => 'setCustomValidity(\'\')',
+                    'required' => true
                 ]
             )->label(false);
             $archive = ob_get_contents();
@@ -824,9 +733,7 @@ class CoursesController extends Controller
                     'prompt' => 'لطفا قرارداد کارگزار را انتخاب کنید',
                     'class' => 'select2 form-select',
                     'id' => '',
-                    'required' => true,
-                    'oninvalid' => 'this.setCustomValidity(\'لطفا قرارداد کارگزار را انتخاب کنید\')',
-                    'oninput' => 'setCustomValidity(\'\')',
+                    'required' => true
                 ]
             )->label(false);
         }
@@ -851,9 +758,7 @@ class CoursesController extends Controller
 
                     'class' => 'form-control numeral-mask text-start',
                     'required' => true,
-                    'type' => 'number',
-                    'oninvalid' => 'this.setCustomValidity(\'لطفا ظرفیت دوره را وارد کنید\')',
-                    'oninput' => 'setCustomValidity(\'\')',
+                    'type' => 'number'
                 ]
             )->label(false);
         }
@@ -1125,19 +1030,24 @@ class CoursesController extends Controller
                 [
                     'attribute' => function ($model) {
                         if ($model->broker != null) {
-                            if ($model->broker['_id'] != null && $model->broker['contract'] != null) {
-                                $broker = Brokers::findOne($model->broker['_id']);
-                                if ($broker != null) {
-                                    $brokerContract = 'قرارداد یاقت نشد';
-                                    foreach ($broker->contracts as $contract) {
-                                        if ($contract['id'] == $model->broker['contract'])
-                                            $brokerContract = 'قرارداد با عنوان ' . $contract['title'] . ' و سهم ' . $contract['share'] . ' درصدی';
-                                    }
-                                    return $broker->connector_info['first_name'] . ' ' . $broker->connector_info['last_name'] . ' - ' . $brokerContract;
-                                } else
-                                    return 'خطا';
-                            } else
-                                return '-';
+                            if (isset($model->broker['_id']) && isset($model->broker['contract']))
+                            {
+                                if ($model->broker['_id'] != null && $model->broker['contract'] != null)
+                                {
+                                    $broker = Brokers::findOne($model->broker['_id']);
+                                    if ($broker != null) {
+                                        $brokerContract = 'قرارداد یاقت نشد';
+                                        foreach ($broker->contracts as $contract) {
+                                            if ($contract['id'] == $model->broker['contract'])
+                                                $brokerContract = 'قرارداد با عنوان ' . $contract['title'] . ' و سهم ' . $contract['share'] . ' درصدی';
+                                        }
+                                        return $broker->connector_info['first_name'] . ' ' . $broker->connector_info['last_name'] . ' - ' . $brokerContract;
+                                    } else
+                                        return 'خطا';
+                                }
+                                else
+                                    return '-';
+                            }
                         } else
                             return '-';
                     },

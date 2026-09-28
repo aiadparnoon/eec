@@ -375,13 +375,7 @@ $this->registerJs($show_off);
                             <td class="text-wrap w-25"><?= $course->title['main_fa'] ?></td>
                             <?php
                             if (Yii::$app->user->identity->role == 'user' || Yii::$app->user->identity->role == 'cnt') {
-                                // رفع باگ (۲۰۲۶-۰۸-۲۸): وقتی دوره‌ای دانشکده‌ای ثبت‌شده نداره،
-                                // college_detail() مقدار null برمی‌گردونه و خط بعدی (->title)
-                                // بدون این چک، یه اخطار خام PHP (انگلیسی) توی همین سلول جدول
-                                // نشون می‌داد. حالا به‌جاش پیغام فارسی «ثبت نشده» نمایش داده می‌شه.
-                                if ($collegeDetail === null)
-                                    echo '<td>ثبت نشده</td>';
-                                else if (strlen($collegeDetail->title) <= 30)
+                                if (strlen($collegeDetail->title) <= 30)
                                     echo '<td>' . $collegeDetail->title . '</td>';
                                 else {
                             ?>

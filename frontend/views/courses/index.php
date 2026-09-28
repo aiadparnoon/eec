@@ -18,191 +18,19 @@ require_once(Yii::$app->basePath . '/web/jdf.php');
 SingleAsset::register($this);
 Select2Asset::register($this);
 $model = new Courses();
-// اصلاح ۲۰۲۶-۰۸-۲۸ (طبق بازخورد کاربر: «فیلدهای نوع دوره و ظرفیت دوره رو دقیق
-// با همون شکل و قوانینی که توی دوره‌های میان‌مدت انجام دادی بزن»): تنظیم
-// سناریوی مدلِ رندرشونده روی همین ویو، عیناً مثل packages/create-package.php
-// (`$model->scenario = Courses::SCENARIO_CREATE_PACKAGE;`) - بدون این خط،
-// قوانین required/scenario-gated مدل (که در Courses::rules() برای
-// SCENARIO_CREATE_COURSE تعریف شدن) هیچ اثری روی همین مدلِ رندرشونده در فرم
-// نداشتن (هرچند actionNew() سمت سرور از قبل این سناریو رو درست ست می‌کرد).
-$model->scenario = Courses::SCENARIO_CREATE_COURSE;
 $front = Yii::getAlias('@front');
-// «محتوا محور» دیگر برای دوره‌های جدید قابل انتخاب نیست - عیناً مثل
-// packages/create-package.php (۲۰۲۶-۰۸-۲۷) - سمت سرور هم توسط
-// Courses::validateContentTypeNotDisabled() اجرا می‌شه.
 $courseType = array(
+    '3' => 'محتوا محور',
     '1' => 'غیر حضوری',
     '2' => 'نیمه حضوری',
-    '4' => ' حضوری',
+    '4' => 'حضوری',
 );
-// نوع ظرفیت: دیگر اینجا یک آرایه‌ی ثابت نیست - عیناً مثل دوره‌های میان‌مدت،
-// بر اساس نقش کاربر و اطلاعات مالی دانشکده/کارگزار محاسبه می‌شه (نگاه کنید
-// CoursesController::resolveCreateCourseCapacityType()، آینه‌ی دقیق
-// PackagesController::resolveCreatePackageOptions()) و از کنترلر پاس داده
-// می‌شه؛ «نامحدود» دیگر بین گزینه‌ها نیست (رکوردهای قدیمی که از قبل این
-// مقدار رو دارن دست نمی‌خوره - نگاه کنید Courses::validateCapacityTypeNotDisabled()).
-/* @var $capacityType array */
+$capacityType = array(
+    '1' => 'نامحدود',
+    '2' => 'محدود',
+    '3' => 'سازمانی'
+);
 
-
-// اصلاح ریشه‌ای ۲۰۲۶-۰۸-۲۸ (طبق سند بررسی دوره‌های کوتاه‌مدت):
-// قبلاً دکمه‌ی «ثبت دوره» فقط و فقط با رویداد onChange روی <select> «مدرس»
-// (که در CoursesController::actionBrokers1 تزریق می‌شه) فعال می‌شد. این باعث دو
-// مشکل واقعی می‌شد: ۱) اگه دانشکده‌ی انتخاب‌شده اصلاً استادی نداشته باشه، آن
-// <select> هرگز رندر نمی‌شه، پس onChange‌اش هم هرگز فایر نمی‌شه و دکمه برای
-// همیشه غیرفعال می‌مونه - even though بقیه‌ی فیلدها پر شده باشن (این دقیقاً
-// همون «انتخاب دانشکده → سایر فیلدها قفل → امکان ثبت از بین می‌ره» بود که برای
-// نقش «ادمین» گزارش شده بود). ۲) برای نقش‌های emp/broker (که دانشکده‌شون از
-// قبل مشخصه و همین اسکریپت پایین موقع لود صفحه اجرا می‌شه)، اصلاً هیچ
-// select2‌ای روی این ۴ فیلد init نمی‌شد و dropdownParent هم تنظیم نبود - که
-// باعث می‌شد Select2 درس/استاد داخل Modal درست کار نکنه.
-// راه‌حل: یک تابع سراسری (initShortTermCourseFields) که بعد از هر بار پر شدن
-// این ۴ فیلد (چه موقع لود صفحه برای emp/broker، چه بعد از تغییر دانشکده توسط
-// ادمین) هم Select2 رو با dropdownParent درست init/دوباره‌سازی می‌کنه، هم
-// دکمه‌ی ثبت رو مستقل از اینکه کدوم فیلد داخلی رندر شده، فعال می‌کنه - اعتبارسنجیِ
-// واقعیِ «همه‌ی فیلدهای ضروری پر شده‌اند یا نه» همچنان بر عهده‌ی required/oninvalid
-// همون فیلدهاست (که در همین اصلاح، پیغام‌هاشون فارسی شد)، نه این دکمه.
-// اصلاح ۲۰۲۶-۰۸-۲۸ (بعد از تست زنده کاربر): چون Yii2 با موقعیت پیش‌فرض registerJs
-// (POS_READY) این کد رو داخل یک jQuery(function($){...}) مشترک می‌پیچه، تعریف
-// «function initShortTermCourseFields(){...}» فقط داخل همون closure قابل‌دیدن بود؛
-// اما فراخوانی‌های این تابع در دو شاخه‌ی onchange دانشکده (که مستقیماً به‌صورت
-// attribute اینلاین روی <select> رندر می‌شن) در scope سراسری اجرا می‌شن و اصلاً
-// به این تابع دسترسی نداشتن -> ReferenceError خاموش که باعث می‌شد نه Select2
-// دوباره init بشه و نه دکمه‌ی ثبت فعال بشه. با اختصاص صریح تابع به window، هم از
-// داخل closure و هم از داخل onchange اینلاین در دسترس قرار می‌گیره.
-// اصلاح ۲۰۲۶-۰۸-۲۸ (طبق بازخورد کاربر: «اگر نوع ظرفیت بر روی محدود باشد -که در
-// حالت پیش‌فرض هم محدود است- باید فیلد ظرفیت نمایان شود»): چون فیلد شماره‌ی
-// ظرفیت (input عددی) فقط داخل رویداد onchange دراپ‌داون «نوع ظرفیت» از طریق
-// AJAX ساخته می‌شه، و مقدار پیش‌فرض همین دراپ‌داون از ابتدا «محدود» است (چون
-// در Yii2 وقتی مقدار مدل با هیچ option ای مطابقت نداره - که برای یک دوره‌ی
-// تازه طبیعیه - مرورگر به‌صورت خودکار اولین گزینه‌ی لیست، یعنی «محدود»، رو
-// انتخاب می‌کنه)، بدون تعامل کاربر با این دراپ‌داون هیچ‌وقت رویداد change فایر
-// نمی‌شه و فیلد ظرفیت هیچ‌وقت ساخته نمی‌شه - این دقیقاً همون چیزیه که کاربر
-// گزارش کرد. راه‌حل: با trigger کردن دستیِ رویداد change روی همین دراپ‌داون در
-// لحظه‌ی لود صفحه، همون منطق موجودِ onchange (که همین‌جا در پایین همین فایل
-// تعریف شده) یک‌بار با مقدار پیش‌فرض فعلی اجرا می‌شه - بدون هیچ کد تکراری یا
-// تغییر در خودِ onchange.
-$this->registerJs('$(document).ready(function(){ $(".capacity_type").trigger("change"); });');
-
-// اصلاح ریشه‌ای ۲۰۲۶-۰۸-۲۸ (طبق بازخورد کاربر «برای انتخاب دانشکده کامبوباکس
-// select2 بذار»): ریشه‌ی واقعی اینکه Select2 روی فیلد «دانشکده»ی این Modal کار
-// نمی‌کرد، id تکراری college بود (همون id روی دراپ‌داون فیلترِ خودِ صفحه‌ی
-// لیست هم هست - courses/_search.php). Select2 هنگام ساخت، عناصر کمکی‌اش رو
-// بر پایه‌ی همون id می‌سازه، پس با دو المان هم‌id، initSelect2 سراسری پروژه
-// (forms-selects.js که با $(".select2").each(...) روی کلاس اجرا می‌شه، نه
-// id) روی اولین match (فیلتر) درست کار می‌کرد ولی روی دومی (این Modal) بی‌صدا
-// fail می‌شد. راه‌حل: id این فیلد در پایین همین فایل حذف شده (مثل الگوی
-// دقیقاً مشابهی که در packages/create-package.php برای همین فیلد استفاده
-// شده: 'id' => '')، و اینجا هم مثل ۴ فیلد دیگر (broker1/teachers1/lessons1/
-// archive1) صراحتاً و با dropdownParent درست init می‌شه - هم داخل
-// initShortTermCourseFields (برای وقتی بعد از تغییر دانشکده یا لود صفحه‌ی
-// emp/broker دوباره لازمه)، هم بلافاصله پایین‌تر (چون فیلد دانشکده، برخلاف
-// ۴ فیلد دیگر، به هیچ AJAX ای وابسته نیست و باید همون لحظه‌ی باز شدن Modal
-// برای نقش «ادمین» هم به شکل Select2 دیده بشه).
-$globalHelper = <<< JS
-window.initShortTermCourseFields = function () {
-    var modalBody = $("#modalCenter .modal-body");
-    $("#broker1 select, #teachers1 select, #lessons1 select, #archive1 select").each(function () {
-        var el = $(this);
-        if (el.hasClass("select2-hidden-accessible")) {
-            el.select2("destroy");
-        }
-        el.select2({
-            placeholder: "انتخاب",
-            dropdownParent: modalBody
-        });
-    });
-    $("select[name='Courses[college]']").each(function () {
-        var el = $(this);
-        if (el.hasClass("select2-hidden-accessible")) {
-            el.select2("destroy");
-        }
-        el.select2({
-            placeholder: "لطفا انتخاب کنید",
-            dropdownParent: modalBody
-        });
-    });
-    $(".submit-course-btn").attr("disabled", false);
-};
-JS;
-$this->registerJs($globalHelper);
-// فراخوانی اولیه: برخلاف broker1/teachers1/lessons1/archive1 (که فقط بعد از
-// انتخاب دانشکده یا AJAX پر می‌شن)، فیلد دانشکده از همون لحظه‌ی باز شدن Modal
-// روی صفحه هست، پس نباید منتظر onchange یا AJAX بمونه.
-$this->registerJs('$(document).ready(function(){ initShortTermCourseFields(); });');
-
-// اصلاح ۲۰۲۶-۰۸-۲۸ (طبق بازخورد کاربر «توی فرم هیچ ولیدیشون Yii یی نمی‌بینم»):
-// بررسی زنده‌ی کنسول مرورگر نشون داد که خطای «jQuery(...).yiiActiveForm is not
-// a function» روی این صفحه (و edit-course و حتی packages/create-package) به
-// یک شکل رخ می‌ده - یعنی اعتبارسنجی سمت کلاینتِ خودِ Yii2 در کل پروژه از قبل
-// (نه فقط اینجا) کار نمی‌کنه. آنچه در دوره‌های میان‌مدت به چشم «ولیدیشن Yii»
-// می‌آد در واقع همین اسکریپت $inlineErrors هست که در create-package.php وجود
-// داره؛ اینجا هم عیناً همون منطق - فقط با هدف #course-form به‌جای
-// #create-package-form - پیاده می‌شه.
-$inlineErrors = <<<JS
-$(document).ready(function() {
-    var form = document.getElementById('course-form');
-    if (!form) {
-        return;
-    }
-
-    function getHelpBlock(field) {
-        var el = field.nextElementSibling;
-        for (var i = 0; i < 3 && el; i++) {
-            if (el.classList && el.classList.contains('help-block')) {
-                return el;
-            }
-            el = el.nextElementSibling;
-        }
-        return null;
-    }
-
-    function extractCustomMessage(el) {
-        if (!el || typeof el.getAttribute !== 'function') {
-            return null;
-        }
-        var attr = el.getAttribute('oninvalid');
-        if (!attr) {
-            return null;
-        }
-        var match = attr.match(/setCustomValidity\(['"]([^'"]*)['"]\)/);
-        return match ? match[1] : null;
-    }
-
-    form.addEventListener('invalid', function(e) {
-        var field = e.target;
-        setTimeout(function() {
-            var helpBlock = getHelpBlock(field);
-            if (!helpBlock) {
-                return;
-            }
-            var message = field.validationMessage;
-            if (!field.hasAttribute('oninvalid')) {
-                var customMessage = extractCustomMessage(field.previousElementSibling);
-                if (customMessage) {
-                    message = customMessage;
-                }
-            }
-            helpBlock.textContent = message;
-            helpBlock.style.color = '#dc3545';
-        }, 0);
-    }, true);
-
-    function clearIfValid(e) {
-        var field = e.target;
-        if (typeof field.checkValidity !== 'function' || !field.checkValidity()) {
-            return;
-        }
-        var helpBlock = getHelpBlock(field);
-        if (helpBlock) {
-            helpBlock.textContent = '';
-        }
-    }
-
-    form.addEventListener('input', clearIfValid, true);
-    form.addEventListener('change', clearIfValid, true);
-});
-JS;
-$this->registerJs($inlineErrors);
 
 if (Yii::$app->user->identity->role != 'user' && Yii::$app->user->identity->role != 'cnt')
 {
@@ -215,7 +43,6 @@ if (Yii::$app->user->identity->role != 'user' && Yii::$app->user->identity->role
             $('#teachers1').html(main_data.teachers);
             $('#archive1').html(main_data.archive);
             $('#lessons1').html(main_data.lessons);
-            initShortTermCourseFields();
         });
 JS;
     $this->registerJs($collegeScript);
@@ -563,12 +390,18 @@ $this->registerJs($js1);
 <?php
 $jss = <<< JS
 $(document).ready(function() {
-        // اصلاح ریشه‌ای ۲۰۲۶-۰۸-۲۸: مقداردهی مجدد کورکورانه‌ی Select2 با setTimeout(200)
-        // حذف شد چون هم فقط ۲ فیلد از ۴ فیلد رو پوشش می‌داد، هم یک race condition
-        // با initShortTermCourseFields() (که حالا همیشه در لحظه‌ی درست پر شدن این
-        // فیلدها فراخوانی می‌شه - چه موقع لود صفحه برای emp/broker، چه بعد از تغییر
-        // دانشکده) داشت. initShortTermCourseFields در بالای همین فایل تعریف شده.
-
+        setTimeout(() => {
+        $("#teachers1 select").select2({
+        placeholder: "انتخاب",
+            dropdownParent: $("#modalCenter .modal-body")
+        });
+        
+        $("#lessons1 select").select2({
+        placeholder: "انتخاب",
+        dropdownParent: $("#modalCenter .modal-body")
+        });
+        }, 200)
+        
     // تعریف متغیرها
     var courseTypeSelect = $('#course-type');
     var capacitySelect = $('.capacity_type');
@@ -969,21 +802,15 @@ $this->registerJs($digit);
                         $registrant = 'نامشخص';
                         $role = '';
                         $registrantDetail = DashboardController::registrant_detail($course->registrant);
-                        // رفع باگ (۲۰۲۶-۰۸-۲۸): قبلاً بدون هیچ چکی از ->role/->first_name
-                        // استفاده می‌شد؛ اگه ثبت‌کننده پیدا نمی‌شد، یه اخطار خام PHP
-                        // (انگلیسی) نشون داده می‌شد. حالا در این حالت «نامشخص» می‌مونه
-                        // (که همین چند خط بالاتر مقداردهی شده).
-                        if ($registrantDetail != null) {
-                            if ($registrantDetail->role == 'user')
-                                $role = 'ادمین';
-                            else if ($registrantDetail->role == 'cnt')
-                                $role = 'کارمند مرکز';
-                            else if ($registrantDetail->role == 'emp')
-                                $role = 'کارشناس دانشکده';
-                            else if ($registrantDetail->role == 'broker')
-                                $role = 'کارگزار';
-                            $registrant = $registrantDetail->first_name . ' ' . $registrantDetail->last_name;
-                        }
+                        if ($registrantDetail->role == 'user')
+                            $role = 'ادمین';
+                        else if ($registrantDetail->role == 'cnt')
+                            $role = 'کارمند مرکز';
+                        else if ($registrantDetail->role == 'emp')
+                            $role = 'کارشناس دانشکده';
+                        else if ($registrantDetail->role == 'broker')
+                            $role = 'کارگزار';
+                        $registrant = $registrantDetail->first_name . ' ' . $registrantDetail->last_name;
                         $sis = '';
                         if($course->status == '1' || $course->status == '6')
                         {
@@ -1020,12 +847,7 @@ $this->registerJs($digit);
                             <?php
                             if (Yii::$app->user->identity->role == 'user' || Yii::$app->user->identity->role == 'cnt')
                             {
-                                // رفع باگ (۲۰۲۶-۰۸-۲۸): وقتی دوره‌ای دانشکده‌ی ثبت‌شده نداره،
-                                // college_detail() مقدار null برمی‌گردونه و ->title بدون این
-                                // چک، اخطار خام PHP (انگلیسی) نشون می‌داد؛ حالا «ثبت نشده».
-                                if ($collegeDetail === null)
-                                    echo '<td>ثبت نشده</td>';
-                                else if (strlen($collegeDetail->title) <= 30)
+                                if (strlen($collegeDetail->title) <= 30)
                                     echo '<td>' . Html::encode($collegeDetail->title) . '</td>';
                                 else {
                             ?>
@@ -1154,14 +976,7 @@ $this->registerJs($digit);
                                         <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">
                                             بستن
                                         </button>
-                                        <?php
-                                        // اصلاح ریشه‌ای ۲۰۲۶-۰۸-۲۸ (کشف‌شده حین تست زنده‌ی دکمه‌ی «ثبت دوره» - همون باگ
-                                        // pre-existing عیناً اینجا هم هست): چون </div> بستن‌کننده‌ی modal-body قبل از
-                                        // </form> واقعی میاد، این دکمه هیچ‌وقت داخل <form> نبوده و کلیکش سابمیت
-                                        // نمی‌کرده. با attribute استاندارد «form» (که $form->id همینجا در دسترسه)
-                                        // مستقل از موقعیت DOM به فرم متصل می‌شه.
-                                        ?>
-                                        <button type="submit" form="<?= $form->id ?>" class="btn btn-primary submit-course-btn">بله مطمئنم</button>
+                                        <button type="submit" class="btn btn-primary submit-course-btn">بله مطمئنم</button>
                                         <?php ActiveForm::end(); ?>
                                     </div>
                                 </div>
@@ -1203,11 +1018,7 @@ $this->registerJs($digit);
                                         <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">
                                             بستن
                                         </button>
-                                        <?php
-                                        // اصلاح ریشه‌ای ۲۰۲۶-۰۸-۲۸: همون باگ pre-existing بالا (مودال ادوبی) اینجا هم
-                                        // تکرار شده - رفعش هم عیناً همون.
-                                        ?>
-                                        <button type="submit" form="<?= $form->id ?>" class="btn btn-primary submit-course-btn">بله مطمئنم</button>
+                                        <button type="submit" class="btn btn-primary submit-course-btn">بله مطمئنم</button>
                                         <?php ActiveForm::end(); ?>
                                     </div>
                                 </div>
@@ -1287,13 +1098,6 @@ $this->registerJs($digit);
                             'class' => '',
                             'enctype' => 'multipart/form-data',
                             'id' => 'course-form'
-                        ],
-                        // اصلاح ۲۰۲۶-۰۸-۲۸ (طبق بازخورد کاربر «توی فرم هیچ ولیدیشون Yii یی نمی‌بینم»):
-                        // errorOptions قرمز، عیناً مثل packages/create-package.php، تا پیغام‌های
-                        // خطا (چه از طریق اسکریپت $inlineErrors پایین‌تر، چه در صورت رندر مجدد
-                        // سمت سرور) به رنگ قرمز زیر فیلد نمایش داده بشن.
-                        'fieldConfig' => [
-                            'errorOptions' => ['class' => 'help-block', 'style' => 'color:#dc3545'],
                         ],
                     ]
                 ); ?>
@@ -1530,17 +1334,8 @@ $this->registerJs($digit);
                                     'prompt' => 'لطفا دانشکده را مشخص کنید',
                                     'class' => 'select2 form-select form-select-lg',
                                     'required' => true,
-                                    // اصلاح ریشه‌ای ۲۰۲۶-۰۸-۲۸: id این فیلد عمداً خالی گذاشته شده - دقیقاً مثل
-                                    // packages/create-package.php برای همین فیلد - چون id="college" با id فیلترِ
-                                    // دراپ‌داون خودِ صفحه‌ی لیست (courses/_search.php) تداخل داشت و باعث می‌شد
-                                    // Select2 روی این فیلد silently init نشه (نگاه کنید توضیح بالای همین فایل).
-                                    'id' => '',
+                                    'id' => 'college',
                                     'data-allow-clear' => true,
-                                    'oninvalid' => 'this.setCustomValidity(\'لطفا دانشکده را مشخص کنید\')',
-                                    'oninput' => 'setCustomValidity(\'\')',
-                                    // اصلاح ریشه‌ای ۲۰۲۶-۰۸-۲۸: به‌جای مقداردهی مجدد جداگانه و ناقص Select2
-                                    // (بدون dropdownParent و بدون فعال کردن دکمه ثبت)، از تابع مشترک
-                                    // initShortTermCourseFields() استفاده می‌شود که همین‌جا در بالای صفحه تعریف شده.
                                     'onchange' => '
                     $.get("' . Url::toRoute('/courses/brokers1') . '", { id: $(this).val() })
                     .done(function(data) {
@@ -1549,7 +1344,22 @@ $this->registerJs($digit);
                         $("#teachers1").html(main_data.teachers);
                         $("#lessons1").html(main_data.lessons);
                         $("#archive1").html(main_data.archive);
-                        initShortTermCourseFields();
+                        
+                        // مقداردهی مجدد Select2 برای المان‌های جدید
+                        setTimeout(function() {
+                            $("#broker1 select").select2({
+                                placeholder: "انتخاب"
+                            });
+                            $("#teachers1 select").select2({
+                                placeholder: "انتخاب"
+                            });
+                            $("#lessons1 select").select2({
+                                placeholder: "انتخاب"
+                            });
+                            $("#archive1 select").select2({
+                                placeholder: "انتخاب"
+                            });
+                        }, 100);
                     });'
                                 ]
                             )->label(false);
@@ -1559,14 +1369,8 @@ $this->registerJs($digit);
                                 [
                                     'class' => 'select2 form-select form-select-lg',
                                     'required' => true,
-                                    // اصلاح ریشه‌ای ۲۰۲۶-۰۸-۲۸: مثل شاخه‌ی بالا، id این فیلد عمداً خالیه (نگاه
-                                    // کنید توضیح شاخه‌ی role=='user' بالاتر برای علت).
-                                    'id' => '',
+                                    'id' => 'college',
                                     'data-allow-clear' => true,
-                                    'oninvalid' => 'this.setCustomValidity(\'لطفا دانشکده را مشخص کنید\')',
-                                    'oninput' => 'setCustomValidity(\'\')',
-                                    // اصلاح ریشه‌ای ۲۰۲۶-۰۸-۲۸: مشابه شاخه بالا، از initShortTermCourseFields()
-                                    // مشترک استفاده می‌شود (dropdownParent صحیح + فعال‌سازی دکمه ثبت).
                                     'onchange' => '
                     $.get("' . Url::toRoute('/courses/brokers1') . '", { id: $(this).val() })
                     .done(function(data) {
@@ -1575,7 +1379,22 @@ $this->registerJs($digit);
                         $("#teachers1").html(main_data.teachers);
                         $("#lessons1").html(main_data.lessons);
                         $("#archive1").html(main_data.archive);
-                        initShortTermCourseFields();
+                        
+                        // مقداردهی مجدد Select2 برای المان‌های جدید
+                        setTimeout(function() {
+                            $("#broker1 select").select2({
+                                placeholder: "انتخاب"
+                            });
+                            $("#teachers1 select").select2({
+                                placeholder: "انتخاب"
+                            });
+                            $("#lessons1 select").select2({
+                                placeholder: "انتخاب"
+                            });
+                            $("#archive1 select").select2({
+                                placeholder: "انتخاب"
+                            });
+                        }, 100);
                     });'
                                 ]
                             )->label(false);
@@ -1619,21 +1438,7 @@ $this->registerJs($digit);
                 <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">
                     بستن
                 </button>
-                <?php
-                // اصلاح ریشه‌ای ۲۰۲۶-۰۸-۲۸ (کشف‌شده حین تست زنده‌ی همین دور از تغییرات - یک باگ
-                // از قبل موجود، مستقل از کل تغییرات این نشست): چون </div> بستن‌کننده‌ی
-                // modal-body (بالاتر) قبل از </form> واقعیِ فرم (که پایین‌تر با
-                // ActiveForm::end() چاپ می‌شه) در HTML میاد، مرورگر طبق قوانین استاندارد
-                // parse کردن HTML، تگ <form> رو زودتر از موعد (همون‌جا که modal-body بسته
-                // می‌شه) به‌طور خودکار می‌بنده؛ در نتیجه این دکمه (که در modal-footer، یعنی
-                // بعد از بسته‌شدنِ واقعیِ فرم قرار داره) اصلاً هیچ‌وقت داخل <form> نبوده و
-                // کلیک روش هیچ سابمیتی رو trigger نمی‌کرد - این با تست زنده تائید شد
-                // (button.closest('form') === null، حتی وقتی همه‌ی فیلدهای required پر و
-                // معتبر بودن). چون جابه‌جا کردن دیوها ریسک به‌هم‌ریختن layout/CSS رو داره،
-                // ایمن‌ترین راه‌حل استاندارد HTML5 استفاده شده: attribute «form» که دکمه رو
-                // مستقل از موقعیتش در DOM، صریحاً به فرم با همون id متصل می‌کنه.
-                ?>
-                <button type="submit" form="course-form" class="btn btn-primary submit-course-btn" disabled>ثبت دوره</button>
+                <button type="submit" class="btn btn-primary submit-course-btn" disabled>ثبت دوره</button>
                 <?php ActiveForm::end(); ?>
             </div>
         </div>

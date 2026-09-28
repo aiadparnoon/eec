@@ -65,31 +65,6 @@ $type = array(
                 ],
             ]); ?>
             <?php
-            // فیلتر «از تاریخ / تا تاریخ» بر اساس تاریخ ثبت دوره (بخش ۱۷ سند دوره‌های
-            // کوتاه‌مدت، ۲۰۲۶-۰۸-۲۸): مدل CoursesSearch از قبل این دو فیلد و منطق
-            // فیلترشون رو بر اساس تایم‌استمپِ توکاررفته توی _id داره (نه lessons[0].date)،
-            // چون طبق تصریح مستند، «تاریخ ثبت رکورد» با «تاریخ برگزاری خودِ دوره» دو مفهوم
-            // متفاوتن و نباید با هم اشتباه بشن؛ فقط فیلدهای فرم برای این صفحه (دوره‌های
-            // کوتاه‌مدت) وجود نداشت. اینجا دقیقاً همون الگوی صفحه‌ی دوره‌های میان‌مدت
-            // (packages/_search.php) رو - از جمله کلاس dob-picker مشترک - تکرار می‌کنیم.
-            echo $form->field($model, 'reg_date_from')->textInput(
-                [
-                    'placeholder' => 'از تاریخ',
-                    'class' => 'form-control form-control-sm dob-picker text-start',
-                    'id' => '',
-                    'dir' => 'ltr',
-                ]
-            )->label(false);
-            echo $form->field($model, 'reg_date_to')->textInput(
-                [
-                    'placeholder' => 'تا تاریخ',
-                    'class' => 'form-control form-control-sm dob-picker text-start',
-                    'id' => '',
-                    'dir' => 'ltr',
-                ]
-            )->label(false);
-            ?>
-            <?php
             echo $form->field($model, 'title[main_fa]')->textInput(
                 [
                     'placeholder' => 'فیلتر نام دوره',

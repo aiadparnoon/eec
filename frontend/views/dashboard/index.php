@@ -4,11 +4,9 @@ use yii\helpers\Html;
 use yii\web\JsExpression;
 use yii\helpers\Url;
 use frontend\assets\DashboardAsset;
-use frontend\assets\Select2Asset;
 use yii\grid\GridView;
 use yii\data\ActiveDataProvider;
 DashboardAsset::register($this);
-Select2Asset::register($this);
 $this->title="میز کار";
 $front = Yii::getAlias('@front');
 date_default_timezone_set("Asia/Tehran");
@@ -552,91 +550,6 @@ JS;
             <hr class="my-5">
             <div class="card">
                 <h5 class="card-header heading-color">دوره های در انتظار بررسی</h5>
-                <div class="card-body pb-0">
-                    <?php
-                    // فیلتر کامل این بخش (طبق درخواست ۲۰۲۶-۰۸-۲۸): عیناً همون
-                    // فیلدهای فیلتر لیست دوره‌های بلندمدت (packages/_search.php)
-                    // - نام دوره، کد مجوز، نوع دوره، دانشکده، کارگزار، از/تا
-                    // تاریخ - با همون چیدمانِ grid (row g-3، هر فیلد یک col-md-3،
-                    // ۸ آیتم توی دو ردیف). فیلتر «وضعیت» عمداً نیست، چون این
-                    // بخش خودش ذاتاً فقط دوره‌های «در انتظار بررسی» رو نشون
-                    // می‌ده. نام‌های GET با پیشوند pending_ هستن تا با فرم
-                    // اصلیِ CoursesSearch بالای همین صفحه تداخل نکنن.
-                    $pendingContentTypeOptions = array(
-                        '3' => 'محتوا محور',
-                        '1' => 'غیرحضوری',
-                        '2' => 'نیمه حضوری',
-                        '4' => 'حضوری',
-                    );
-                    // بهبود UI (۲۰۲۶-۰۸-۲۸، دور ششم): چون فیلتر و جدول قبلاً هر دو
-                    // مستقیم توی همون card-body/کارت سفید بودن و هیچ مرز/پس‌زمینه‌ای
-                    // بینشون نبود، فرم فیلتر داخل یک باکسِ bg-light گرد‌شده قرار
-                    // گرفت تا بصری از جدولِ زیرش جدا بشه. همچنین فیلدهای «دانشکده» و
-                    // «کارگزار» به select2 (با قابلیت جستجو) تبدیل شدن - دقیقاً با
-                    // همون الگویی که packages/_search.php ازش استفاده می‌کنه.
-                    $pendingSelect2 = <<< JS
-    $('#pending_college').select2({
-        placeholder: "فیلتر دانشکده",
-        allowClear: true
-    });
-    $('#pending_broker').select2({
-        placeholder: "فیلتر کارگزار",
-        allowClear: true
-    });
-JS;
-                    $this->registerJs($pendingSelect2);
-                    ?>
-                    <div class="bg-light rounded p-3 mb-3">
-                        <form method="get" class="row g-3 align-items-end">
-                            <div class="col-md-3 col-sm-6">
-                                <label class="form-label">از تاریخ</label>
-                                <input type="text" name="pending_reg_date_from" class="form-control form-control-sm dob-picker text-start" dir="ltr" placeholder="از تاریخ" value="<?= Html::encode($pendingRegDateFrom ?? '') ?>">
-                            </div>
-                            <div class="col-md-3 col-sm-6">
-                                <label class="form-label">تا تاریخ</label>
-                                <input type="text" name="pending_reg_date_to" class="form-control form-control-sm dob-picker text-start" dir="ltr" placeholder="تا تاریخ" value="<?= Html::encode($pendingRegDateTo ?? '') ?>">
-                            </div>
-                            <div class="col-md-3 col-sm-6">
-                                <label class="form-label">نام دوره</label>
-                                <input type="text" name="pending_title" class="form-control form-control-sm" placeholder="فیلتر نام دوره" value="<?= Html::encode($pendingTitle ?? '') ?>">
-                            </div>
-                            <div class="col-md-3 col-sm-6">
-                                <label class="form-label">کد مجوز دوره</label>
-                                <input type="text" name="pending_license_code" class="form-control form-control-sm" placeholder="فیلتر کد مجوز دوره" value="<?= Html::encode($pendingLicenseCode ?? '') ?>">
-                            </div>
-                            <div class="col-md-3 col-sm-6">
-                                <label class="form-label">نوع دوره</label>
-                                <select name="pending_content_type" class="form-select form-select-sm">
-                                    <option value="">فیلتر نوع دوره</option>
-                                    <?php foreach ($pendingContentTypeOptions as $val => $label): ?>
-                                        <option value="<?= Html::encode($val) ?>" <?= ((string) $pendingContentType === (string) $val) ? 'selected' : '' ?>><?= Html::encode($label) ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-                            <div class="col-md-3 col-sm-6">
-                                <label class="form-label">دانشکده</label>
-                                <select name="pending_college" id="pending_college" class="select2 form-select none-parent">
-                                    <option value="">فیلتر دانشکده</option>
-                                    <?php foreach ($pendingColleges as $val => $label): ?>
-                                        <option value="<?= Html::encode($val) ?>" <?= ((string) $pendingCollege === (string) $val) ? 'selected' : '' ?>><?= Html::encode($label) ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-                            <div class="col-md-3 col-sm-6">
-                                <label class="form-label">کارگزار</label>
-                                <select name="pending_broker" id="pending_broker" class="select2 form-select none-parent">
-                                    <option value="">فیلتر کارگزار</option>
-                                    <?php foreach ($pendingBrokers as $val => $label): ?>
-                                        <option value="<?= Html::encode($val) ?>" <?= ((string) $pendingBroker === (string) $val) ? 'selected' : '' ?>><?= Html::encode($label) ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-                            <div class="col-md-3 col-sm-6">
-                                <button type="submit" class="btn btn-primary btn-sm w-100">فیلتر</button>
-                            </div>
-                        </form>
-                    </div>
-                </div>
                 <div class="table-responsive text-nowrap">
                     <?php
                     if($coursesPending != null)
@@ -677,26 +590,18 @@ JS;
                                     $link = 'packages/edit-package';
                                 }
                                 $collegeDetail = $this->context->college_detail($item->college);
-                                // رفع باگ (۲۰۲۶-۰۸-۲۸): وقتی دوره‌ای دانشکده‌ی ثبت‌شده نداره،
-                                // college_detail() مقدار null برمی‌گردونه و ->title بدون این
-                                // چک، اخطار خام PHP (انگلیسی) نشون می‌داد؛ حالا پیغام فارسی.
-                                $collegeTitle = ($collegeDetail !== null) ? $collegeDetail->title : 'ثبت نشده';
                                 $registrant = 'نامشخص';
                                 if($item->registrant == Yii::getAlias('@adminUsername'))
                                     $registrant = 'مدیریت';
                                 else
                                 {
                                     $registrantDetail = $this->context->registrant_detail($item->registrant);
-                                    // همون رفع باگ برای ثبت‌کننده - اگه پیدا نشه، «نامشخص» می‌مونه
-                                    // (که همین چند خط بالاتر مقداردهی شده) به‌جای اخطار خام PHP.
-                                    if ($registrantDetail !== null) {
-                                        $role = '';
-                                        if($registrantDetail->role == 'emp')
-                                            $role = 'کارشناس دانشکده';
-                                        else if($registrantDetail->role == 'broker')
-                                            $role = 'کارگزار';
-                                        $registrant = $registrantDetail->first_name.' '.$registrantDetail->last_name.'('.$role.')';
-                                    }
+                                    $role = '';
+                                    if($registrantDetail->role == 'emp')
+                                        $role = 'کارشناس دانشکده';
+                                    else if($registrantDetail->role == 'broker')
+                                        $role = 'کارگزار';
+                                    $registrant = $registrantDetail->first_name.' '.$registrantDetail->last_name.'('.$role.')';
                                 }
                                 ?>
                                 <tr>
@@ -730,7 +635,7 @@ JS;
                                             echo '-';
                                         ?>
                                     </td>
-                                    <td class="text-wrap w-25"><?= Html::encode($collegeTitle) ?></td>
+                                    <td class="text-wrap w-25"><?= Html::encode($collegeDetail->title) ?></td>
                                     <td class="text-wrap w-25"><?= Html::encode($registrant) ?></td>
                                     <td>
                                         <a href="<?= Yii::$app->urlManager->createAbsoluteUrl([$link,'_id'=>(string) $item->_id]) ?>" class="badge bg-info">مشاهده دوره</a>

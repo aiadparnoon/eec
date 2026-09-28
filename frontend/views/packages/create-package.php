@@ -16,19 +16,10 @@ use mihaildev\ckeditor\CKEditor;
 
 SingleAsset::register($this);
 Select2Asset::register($this);
-// وقتی ثبت دوره به‌خاطر خطای اعتبارسنجی fail می‌شه، کنترلر همین ویو رو دوباره
-// با همون مدل (شامل مقادیر واردشده توسط کاربر + خطاهای دقیق هر فیلد) رندر
-// می‌کنه؛ در حالت عادی (بار اول باز کردن صفحه) مدلی پاس داده نمی‌شه و طبق
-// روال قبلی یک مدل تازه ساخته می‌شه. (2026-08-27)
-if (!isset($model)) {
-    $model = new Courses();
-}
-$model->scenario = Courses::SCENARIO_CREATE_PACKAGE;
+$model = new Courses();
 $front = Yii::getAlias('@front');
-// «محتوا محور» دیگر برای دوره‌های جدید قابل انتخاب نیست، پس از این لیست حذف
-// شده (2026-08-27) - سمت سرور هم توسط Courses::validateContentTypeNotDisabled()
-// اجرا می‌شه.
 $courseType = array(
+    '3' => 'محتوا محور',
     '1' => 'غیر حضوری',
     '2' => 'نیمه حضوری',
     '4' => ' حضوری',
@@ -91,7 +82,7 @@ JS;
     Yii::$app->session->remove('status');
 }
 
-$url = Url::toRoute('/packages/show_courses');
+$url = Yii::$app->urlManager->createAbsoluteUrl('packages/show_courses', 'https');
 $_csrf = Yii::$app->request->getCsrfToken();
 $ajax = <<<JS
 
@@ -276,151 +267,6 @@ $(document).ready(function() {
 JS;
 $this->registerJs($contract_file);
 
-// ===== نمایش پیغام خطای اعتبارسنجی با رنگ قرمز زیر هر اینپوت =====
-// این اسکریپت به هیچ رفتار قبلی دست نمی‌زند (فقط اضافه‌ست): همون required
-// و oninvalid/oninput اصلی روی خود اینپوت‌ها دقیقاً مثل قبل کار می‌کنن (از جمله
-// تمرکز مرورگر روی اولین فیلد نامعتبر و بالن پیش‌فرض مرورگر). این اسکریپت فقط
-// وقتی هر فیلد نامعتبر بشه، همون پیغام (validationMessage) رو به رنگ قرمز
-// داخل همون <div class="help-block"></div> که Yii از قبل کنار هر اینپوت
-// می‌سازه می‌نویسه، و به‌محض معتبر شدن دوباره (تایپ/تغییر)، پاکش می‌کنه.
-//
-// به‌جای بستن رویداد به تک‌تک اینپوت‌ها (که موقع لود صفحه ثابتن)، از
-// event capturing روی خود فرم استفاده شده - چون رویداد invalid حباب
-// (bubble) نمی‌کنه اما در فاز capture از فرم عبور می‌کنه. این باعث میشه
-// فیلدهایی که بعداً و به‌صورت پویا توسط اسکریپت‌های دیگه ساخته/جایگزین
-// می‌شن هم درست پوشش داده بشن، بدون هیچ تغییری در اون اسکریپت‌ها؛ دو
-// نمونه‌ی واقعی که همین الان روی این فرم وجود داره:
-//   ۱) فیلد آپلود قرارداد (#contract_file) که required بودنش با انتخاب
-//      نوع ظرفیت به‌صورت پویا (true/false) عوض می‌شه.
-//   ۲) دو فیلد تاریخ (تاریخ شروع/اتمام دوره) که flatpickr با altInput
-//      روی اونها فعاله: flatpickr خود اینپوت اصلی رو به type="hidden"
-//      تبدیل می‌کنه (که دیگه مشمول اعتبارسنجی مرورگر نیست) و یک اینپوت
-//      نمایشی جدید کنارش می‌سازه که واقعاً اعتبارسنجی و رویداد invalid
-//      روی همونه - این اینپوت جدید همون کسیه که بلافاصله قبل از
-//      .help-block قرار می‌گیره، پس همچنان به‌درستی هدف قرار می‌گیره.
-// خوندن validationMessage داخل یک setTimeout(0) به تعویق افتاده تا
-// oninvalid اصلی (که پیغام فارسی رو با setCustomValidity ست می‌کنه) قبل
-// از خوندن پیغام، حتماً اجرا شده باشه.
-//
-// نکته‌ی اضافه درباره‌ی حالت flatpickr (مورد ۲ بالا): چون اینپوت نمایشی
-// جدیدی که flatpickr می‌سازه خودش هیچ oninvalid ندازه (فقط اینپوت اصلیِ
-// حالا-مخفی‌شده این رو داره)، پیغام پیش‌فرض انگلیسی مرورگر رو برمی‌گردونه.
-// برای همین، وقتی خود فیلدِ نامعتبر oninvalid نداشته باشه، پیغام فارسی رو
-// از روی همون oninvalid اینپوت اصلی (که flatpickr درست قبل از اینپوت
-// نمایشی جدید نگه می‌داره) استخراج می‌کنیم - بدون هیچ تغییری در flatpickr
-// یا خود اینپوت اصلی.
-$inlineErrors = <<<JS
-$(document).ready(function() {
-    var form = document.getElementById('create-package-form');
-    if (!form) {
-        return;
-    }
-
-    function getHelpBlock(field) {
-        // معمولاً .help-block دقیقاً همسایه‌ی بعدیه؛ اما بعضی ویجت‌ها (مثل
-        // select2 روی فیلد دانشکده) یک span پوششی بین اینپوت اصلی و
-        // .help-block اضافه می‌کنن، پس تا ۲ همسایه‌ی بعدی رو هم چک می‌کنیم.
-        var el = field.nextElementSibling;
-        for (var i = 0; i < 3 && el; i++) {
-            if (el.classList && el.classList.contains('help-block')) {
-                return el;
-            }
-            el = el.nextElementSibling;
-        }
-        return null;
-    }
-
-    function extractCustomMessage(el) {
-        if (!el || typeof el.getAttribute !== 'function') {
-            return null;
-        }
-        var attr = el.getAttribute('oninvalid');
-        if (!attr) {
-            return null;
-        }
-        var match = attr.match(/setCustomValidity\(['"]([^'"]*)['"]\)/);
-        return match ? match[1] : null;
-    }
-
-    form.addEventListener('invalid', function(e) {
-        var field = e.target;
-        setTimeout(function() {
-            var helpBlock = getHelpBlock(field);
-            if (!helpBlock) {
-                return;
-            }
-            var message = field.validationMessage;
-            if (!field.hasAttribute('oninvalid')) {
-                var customMessage = extractCustomMessage(field.previousElementSibling);
-                if (customMessage) {
-                    message = customMessage;
-                }
-            }
-            helpBlock.textContent = message;
-            helpBlock.style.color = '#dc3545';
-        }, 0);
-    }, true);
-
-    function clearIfValid(e) {
-        var field = e.target;
-        if (typeof field.checkValidity !== 'function' || !field.checkValidity()) {
-            return;
-        }
-        var helpBlock = getHelpBlock(field);
-        if (helpBlock) {
-            helpBlock.textContent = '';
-        }
-    }
-
-    form.addEventListener('input', clearIfValid, true);
-    form.addEventListener('change', clearIfValid, true);
-});
-JS;
-$this->registerJs($inlineErrors);
-
-// ===== قیمت با تخفیف نباید بیشتر از قیمت اصلی باشد =====
-// این فقط یک هشدار زودهنگام سمت مرورگره (تجربه‌ی کاربری بهتر)؛ منبع واقعی و
-// تضمین‌شده همون قانون سمت سرور Courses::validateDiscountNotAbovePrice()
-// هست که مساوی بودن (یعنی «بدون تخفیف») رو مجاز می‌دونه و فقط بیشتر بودن
-// واقعی رو رد می‌کنه - این اسکریپت هم دقیقاً همون منطق رو پیاده می‌کنه تا
-// پیغام زودتر (قبل از سابمیت) و از طریق همون مکانیزم $inlineErrors بالا
-// (که به رویداد invalid گوش می‌ده) به رنگ قرمز زیر فیلد نشون داده بشه.
-$discountCheck = <<<JS
-$(document).ready(function() {
-    var priceInput = document.getElementById('courses-price');
-    var discountInput = document.getElementById('courses-discount_price');
-    if (!priceInput || !discountInput) {
-        return;
-    }
-
-    function checkDiscount() {
-        var price = parseFloat(priceInput.value);
-        var discount = parseFloat(discountInput.value);
-        if (discountInput.value.trim() === '' || isNaN(discount) || isNaN(price)) {
-            discountInput.setCustomValidity('');
-            return;
-        }
-        if (discount > price) {
-            discountInput.setCustomValidity('قیمت با تخفیف نمی‌تواند بیشتر از قیمت اصلی باشد');
-        } else {
-            discountInput.setCustomValidity('');
-        }
-    }
-
-    priceInput.addEventListener('input', checkDiscount);
-    priceInput.addEventListener('change', checkDiscount);
-    discountInput.addEventListener('input', checkDiscount);
-    discountInput.addEventListener('change', checkDiscount);
-    discountInput.addEventListener('blur', function() {
-        checkDiscount();
-        if (!discountInput.validity.valid) {
-            discountInput.reportValidity();
-        }
-    });
-});
-JS;
-$this->registerJs($discountCheck);
-
 if (Yii::$app->user->identity->role != 'user' || Yii::$app->user->identity->role != 'cnt') {
     $collegeId = $myCollege['0']->_id;
     $collegeScript = <<< JS
@@ -503,165 +349,141 @@ $this->registerJs($calDate);
 
 $js = <<< JS
 $(document).ready(function() {
-    // نکته‌ی مهم (ریشه‌ی باگ «تاریخ اتمام دوره فعال نمی‌شه»):
-    // flatpickr (با altInput:true) اینپوت اصلیِ تاریخ شروع/اتمام
-    // (id="start-date" / id="end-date") رو به type="hidden" تبدیل می‌کنه و
-    // یک اینپوت نمایشیِ تازه (بدون id) درست بعدش اضافه می‌کنه. این اتفاق روی
-    // این صفحه ممکنه *بعد* از اجرای همین $(document).ready بیفته. نسخه‌ی
-    // قبلیِ این اسکریپت یک‌بار، همون لحظه‌ی اول، $('#from1 input')/
-    // $('#to1 input') رو می‌خوند و در startDate/endDate ذخیره می‌کرد؛ وقتی
-    // بعداً اینپوت نمایشیِ جدید ساخته می‌شد، اون متغیرهای قدیمی اصلاً ازش خبر
-    // نداشتن (jQuery چنین رفرنسی رو خودکار به‌روز نمی‌کنه) و disabled/value
-    // فقط روی اینپوت اصلیِ (حالا مخفیِ) قبلی اعمال می‌شد - نتیجه این بود که
-    // از دید کاربر، فیلد «تاریخ اتمام دوره» هیچ‌وقت فعال به نظر نمی‌رسید، چون
-    // خودِ اینپوت نمایشی که کاربر می‌بینه دست‌نخورده می‌موند.
-    // راه‌حل: دیگه رفرنس ثابتی نگه نمی‌داریم؛ هر بار اینپوت‌های واقعیِ داخل
-    // #from1/#to1 رو تازه می‌خونیم (startInputs/endInputs) و رویدادها هم -
-    // دقیقاً مثل فیکس قبلیِ پیغام‌های خطا (oninvalid) در بالای همین فایل -
-    // روی کانتینر ثابت #from1/#to1 به‌صورت delegated بسته می‌شن؛ این‌طوری
-    // فرقی نمی‌کنه اینپوت اصلی مخفی شده باشه یا اینپوت نمایشیِ جدید
-    // جایگزینش شده باشه. (2026-08-27)
-
+    // استفاده مستقیم از IDهایی که در HTML گذاشتید
+    var startDate = $('#from1 input');
+    var endDate = $('#to1 input');
     var deadlineDate = $('#deadline-date');
-
-    function startInputs() { return $('#from1 input'); }
-    function endInputs() { return $('#to1 input'); }
-
-    // مقدار واقعی (dateFormat پیش‌فرض میلادی) همیشه روی اینپوت اصلی نگه
-    // داشته می‌شه؛ چون flatpickr اینپوت نمایشیِ altInput رو همیشه *بعد* از
-    // اینپوت اصلی اضافه می‌کنه، .first() همیشه دقیقاً همون اینپوت اصلی رو
-    // برمی‌گردونه، چه هنوز hidden نشده باشه چه شده باشه.
-    function currentStartVal() { return startInputs().first().val().trim(); }
-    function currentEndVal() { return endInputs().first().val().trim(); }
-
+    // پیدا کردن deadline از طریق DOM
+    // var deadlineDiv = $('#from1').next().next();
+    // var deadlineDate = deadlineDiv.find('input');
+    
     // غیرفعال کردن اولیه
-    endInputs().prop('disabled', true);
+    endDate.prop('disabled', true);
     deadlineDate.prop('disabled', true);
-
+    
     // تابع برای اعتبارسنجی تاریخ اتمام
     function validateEndDate() {
-        var startVal = currentStartVal();
-        var endVal = currentEndVal();
-
+        var startVal = startDate.val().trim();
+        var endVal = endDate.val().trim();
+        
         // اگر تاریخ شروع وجود ندارد
         if (!startVal) {
-            endInputs().prop('disabled', true);
+            endDate.prop('disabled', true);
             return false;
         }
-
+        
         // اگر تاریخ اتمام خالی است
         if (!endVal) {
             deadlineDate.val('');
             deadlineDate.prop('disabled', true);
             return false;
         }
-
+        
         var start = new Date(startVal);
         var end = new Date(endVal);
-
+        
         // بررسی اعتبار
         if (end <= start) {
             // فقط یک بار پیام نشان بده
-            if (!endInputs().hasClass('error-shown')) {
-                endInputs().addClass('error-shown');
+            if (!endDate.hasClass('error-shown')) {
+                endDate.addClass('error-shown');
             }
-            endInputs().val('');
+            endDate.val('');
             deadlineDate.val('');
             deadlineDate.prop('disabled', true);
             return false;
         } else {
             // اگر تاریخ درست بود، کلاس خطا را حذف کن
-            endInputs().removeClass('error-shown');
-
+            endDate.removeClass('error-shown');
+            
             // محاسبه deadline
             calculateDeadline(start, end);
             return true;
         }
     }
-
+    
     // تابع محاسبه deadline
     function calculateDeadline(start, end) {
         var diff = end.getTime() - start.getTime();
         var quarter = diff / 4;
         var deadline = new Date(start.getTime() + quarter);
-
+        
         // فرمت تاریخ
-        var deadlineStr = deadline.getFullYear() + '/' +
-                         String(deadline.getMonth() + 1).padStart(2, '0') + '/' +
+        var deadlineStr = deadline.getFullYear() + '/' + 
+                         String(deadline.getMonth() + 1).padStart(2, '0') + '/' + 
                          String(deadline.getDate()).padStart(2, '0');
-
+        
         deadlineDate.val(deadlineStr);
         deadlineDate.prop('disabled', false);
     }
-
-    // رویداد تغییر تاریخ شروع - delegated روی کانتینر ثابت #from1 (نه خودِ
-    // اینپوت‌های داخلش)، تا چه اینپوت اصلیِ مخفی‌شده تغییر کنه چه اینپوت
-    // نمایشیِ altInput، درست کار کنه.
-    $('#from1').on('change input', 'input', function() {
-        var startVal = currentStartVal();
-
+    
+    // رویداد تغییر تاریخ شروع
+    startDate.on('change', function() {
+        var startVal = $(this).val().trim();
+        
         if (startVal) {
-            endInputs().prop('disabled', false);
-            endInputs().val('');
+            endDate.prop('disabled', false);
+            endDate.val('');
             deadlineDate.val('');
             deadlineDate.prop('disabled', true);
         } else {
-            endInputs().prop('disabled', true);
-            endInputs().val('');
-            deadlineDate.val('');
+            endDate.prop('disabled', true);
             deadlineDate.prop('disabled', true);
+            endDate.val('');
+            deadlineDate.val('');
         }
-
+        
         // اگر تاریخ اتمام پر شده بود، دوباره اعتبارسنجی کن
-        if (currentEndVal()) {
+        if (endDate.val().trim()) {
             validateEndDate();
         }
     });
-
-    // چند رویداد برای تاریخ اتمام - این‌ها هم delegated روی #to1 هستن
-    $('#to1').on('change', 'input', validateEndDate);
-
+    
+    // چند رویداد برای تاریخ اتمام
+    endDate.on('change', validateEndDate);
+    
     // رویداد blur (وقتی از فیلد خارج می‌شود)
-    $('#to1').on('blur', 'input', function() {
+    endDate.on('blur', function() {
         if ($(this).val().trim()) {
             validateEndDate();
         }
     });
-
+    
     // رویداد input (تایپ لحظه‌ای - اختیاری)
-    $('#to1').on('input', 'input', function() {
+    endDate.on('input', function() {
         // فقط وقتی مقدار کامل به نظر می‌رسد اعتبارسنجی کن
-        if (currentEndVal().length >= 8) { // حداقل طول یک تاریخ
+        var val = $(this).val().trim();
+        if (val.length >= 8) { // حداقل طول یک تاریخ
             validateEndDate();
         }
     });
-
+    
     // وقتی فرم submit می‌شود
     $('form').on('submit', function(e) {
-        var startVal = currentStartVal();
-        var endVal = currentEndVal();
+        var startVal = startDate.val().trim();
+        var endVal = endDate.val().trim();
         var deadlineVal = deadlineDate.val().trim();
-
+        
         if (!startVal) {
             e.preventDefault();
             alert('لطفا تاریخ شروع را وارد کنید');
-            startInputs().first().focus();
+            startDate.focus();
             return false;
         }
-
+        
         if (!endVal) {
             e.preventDefault();
             alert('لطفا تاریخ اتمام را وارد کنید');
-            endInputs().first().focus();
+            endDate.focus();
             return false;
         }
-
+        
         if (!deadlineVal) {
             e.preventDefault();
             alert('لطفا منتظر بمانید تا مهلت ثبت عضو محاسبه شود');
             return false;
         }
-
+        
         // اعتبارسنجی نهایی
         if (!validateEndDate()) {
             e.preventDefault();
@@ -794,39 +616,6 @@ $(document).ready(function() {
 JS;
 
 $this->registerJs($jss);
-
-// تغییر ۲ (رفع باگ، ۲۰۲۶-۰۸-۲۸): چون گزینه‌ی «نامحدود» دیگه توی این فرم
-// نیست، مرورگر همیشه اولین گزینه‌ی دراپ‌داونِ «نوع ظرفیت» یعنی «محدود» رو
-// به‌صورت پیش‌فرض انتخاب‌شده نشون می‌ده - اما فیلد «ظرفیت» فقط از طریق AJAX
-// داخل رویداد onchange همین دراپ‌داون پر/نمایش داده می‌شه، که روی لود اولیه‌ی
-// صفحه هیچ‌وقت اجرا نمی‌شد؛ در نتیجه با اینکه «محدود» انتخاب شده بود، فیلد
-// ظرفیت مخفی می‌موند. این اسکریپت دقیقاً همون منطقِ onchange (بدون تغییر در
-// اکشن کنترلر یا در نتیجه‌ی نهایی) رو یک‌بار هم روی لود اولیه‌ی صفحه اجرا
-// می‌کنه تا وضعیت اولیه با مقدار واقعاً انتخاب‌شده هماهنگ باشه.
-$capacityUrl = Url::toRoute('/packages/capacity');
-$capacityInitJs = '
-$(document).ready(function() {
-    var initialCapacityType = $("#courses-student_capacity-type").val();
-    if (initialCapacityType) {
-        $.get( "' . $capacityUrl . '", { id: initialCapacityType } )
-        .done(function( data ) {
-            $("#capacity1").html(data);
-            $(".js-example-basic-single").select2({
-                placeholder: "انتخاب"
-            });
-        });
-
-        if (initialCapacityType == "3") {
-            $("#contract_file_div").show();
-            $("#contract_file").prop("required", true);
-        } else {
-            $("#contract_file_div").hide();
-            $("#contract_file").prop("required", false);
-        }
-    }
-});
-';
-$this->registerJs($capacityInitJs);
 
 
 
@@ -1059,7 +848,6 @@ $this->registerJs($ins_date);
                         'action' => ['new'],
                         "method" => "post",
                         'options' => [
-                            'id' => 'create-package-form',
                             'class' => '',
                             'enctype' => 'multipart/form-data'
                         ],
@@ -1067,11 +855,6 @@ $this->registerJs($ins_date);
                             'options' => [
                                 'tag' => false,
                             ],
-                            // خطاهای سمت سرور (مثلاً وقتی ذخیره‌سازی fail می‌شه و
-                            // همین صفحه با پیغام خطا دوباره رندر می‌شه) هم به رنگ
-                            // قرمز نشون داده بشن - هماهنگ با اسکریپت $inlineErrors
-                            // پایین‌تر که پیغام‌های سمت مرورگر رو قرمز می‌کنه.
-                            'errorOptions' => ['class' => 'help-block', 'style' => 'color:#dc3545'],
                         ],
                     ]
                 ); ?>
@@ -1197,14 +980,14 @@ $this->registerJs($ins_date);
                     placeholder: "انتخاب"
                 });
             });
-
+          
             if (this.value == "3") {
                 $("#contract_file_div").show();
                 $("#contract_file").prop("required", true);
             } else {
                 $("#contract_file_div").hide();
                 $("#contract_file").prop("required", false);
-                $("#fileInput").val("");
+                $("#fileInput").val(""); 
             }
         '
                             ]
@@ -1344,7 +1127,7 @@ $this->registerJs($ins_date);
                                     </div>
                                     <div class="mb-3 col-lg-6 col-xl-3 col-12 mb-0">
                                         <label class="form-label" for="form-repeater-1-2">مبلغ (تومان) *</label>
-                                        <input type="number" required name="amount" id="form-repeater-1-2" class="form-control text-start only-english-digits" dir="ltr">
+                                        <input type="number" required name="amount" id="form-repeater-1-2" class="form-control text-start" dir="ltr">
                                     </div>
                                     <div class="mb-3 col-lg-12 col-xl-2 col-12 d-flex align-items-center mb-0">
                                         <button class="btn btn-label-danger mt-4" data-repeater-delete="">
@@ -1370,12 +1153,6 @@ $this->registerJs($ins_date);
                                     'prompt' => 'لطفا دانشکده را مشخص کنید',
                                     'class' => 'select2 form-select form-select-lg',
                                     'required' => true,
-                                    // اصلاح ۲۰۲۶-۰۸-۲۸: بدون oninvalid/oninput، مرورگر برای این
-                                    // فیلد پیغام پیش‌فرض انگلیسی نشون می‌داد - همون الگوی موجود
-                                    // پروژه (مثل فیلد ظرفیت در PackagesController::actionCapacity)
-                                    // روی این فیلد هم اعمال شد.
-                                    'oninvalid' => 'this.setCustomValidity(\'لطفا دانشکده را مشخص کنید\')',
-                                    'oninput' => 'setCustomValidity(\'\')',
                                     'id' => '',
                                     'data-allow-clear' => true,
                                     'onchange' => '
@@ -1404,8 +1181,6 @@ $this->registerJs($ins_date);
                                 [
                                     'class' => 'select2 form-select form-select-lg',
                                     'required' => true,
-                                    'oninvalid' => 'this.setCustomValidity(\'لطفا دانشکده را مشخص کنید\')',
-                                    'oninput' => 'setCustomValidity(\'\')',
                                     'id' => '',
                                     'data-allow-clear' => true,
                                     'onchange' => '

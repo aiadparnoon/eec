@@ -302,40 +302,6 @@ JS;
             "closeButton": "true"
         });
 JS;
-    // تغییر ۶/۷ (2026-08-28): پیغام دقیقِ اعتبارسنجی اقساط (الزامی بودن، فقط
-    // عدد انگلیسی، تاریخ، یا مجموع مبلغ نسبت به قیمت دوره) - از همون خطای
-    // واقعی مدل Courses میاد، نه یک پیغام ثابت.
-    else if (Yii::$app->session->get('status') == '35') {
-        $installmentErrorMsg = Yii::$app->session->has('installmentError')
-            ? Yii::$app->session->get('installmentError')
-            : 'اطلاعات قسط معتبر نیست';
-        $installmentErrorJs = json_encode($installmentErrorMsg, JSON_UNESCAPED_UNICODE);
-        $script = <<< JS
-    toastr.error({$installmentErrorJs}, {
-            positionClass: "toast-top-center",
-            containerId: "toast-top-center",
-            "closeButton": "true"
-        });
-JS;
-        Yii::$app->session->remove('installmentError');
-    }
-    // تغییر ۹/۱۰ (2026-08-28): پیغام دقیقِ اعتبارسنجی کد تخفیف (الزامی بودن،
-    // فقط عدد انگلیسی، یا بیشتر از سهم کارگزار) - از همون خطای واقعی مدل
-    // Discounts میاد.
-    else if (Yii::$app->session->get('status') == '34') {
-        $discountErrorMsg = Yii::$app->session->has('discountError')
-            ? Yii::$app->session->get('discountError')
-            : 'اطلاعات کد تخفیف معتبر نیست';
-        $discountErrorJs = json_encode($discountErrorMsg, JSON_UNESCAPED_UNICODE);
-        $script = <<< JS
-    toastr.error({$discountErrorJs}, {
-            positionClass: "toast-top-center",
-            containerId: "toast-top-center",
-            "closeButton": "true"
-        });
-JS;
-        Yii::$app->session->remove('discountError');
-    }
     $this->registerJs($script);
     Yii::$app->session->remove('status');
 }
@@ -649,140 +615,115 @@ $this->registerJs($pcPos);
 
 $js = <<< JS
 $(document).ready(function() {
-    // نکته‌ی مهم (ریشه‌ی باگ «تاریخ اتمام دوره فعال نمی‌شه»): flatpickr (با
-    // altInput:true) اینپوت اصلیِ تاریخ شروع/اتمام رو به type="hidden" تبدیل
-    // می‌کنه و یک اینپوت نمایشیِ تازه (بدون id) درست بعدش اضافه می‌کنه. این
-    // اتفاق روی این صفحه ممکنه *بعد* از اجرای همین $(document).ready بیفته.
-    // نسخه‌ی قبلیِ این اسکریپت یک‌بار، همون لحظه‌ی اول، $('#from1 input')/
-    // $('#to1 input') رو می‌خوند و در startDate/endDate ذخیره می‌کرد؛ وقتی
-    // بعداً اینپوت نمایشیِ جدید ساخته می‌شد، اون متغیرهای قدیمی اصلاً ازش خبر
-    // نداشتن (jQuery چنین رفرنسی رو خودکار به‌روز نمی‌کنه) و disabled/value
-    // فقط روی اینپوت اصلیِ (حالا مخفیِ) قبلی اعمال می‌شد - نتیجه این بود که
-    // از دید کاربر، فیلد «تاریخ اتمام دوره» هیچ‌وقت فعال به نظر نمی‌رسید، چون
-    // خودِ اینپوت نمایشی که کاربر می‌بینه دست‌نخورده می‌موند.
-    // راه‌حل: دیگه رفرنس ثابتی نگه نمی‌داریم؛ هر بار اینپوت‌های واقعیِ داخل
-    // #from1/#to1 رو تازه می‌خونیم (startInputs/endInputs) و رویدادها هم -
-    // دقیقاً مثل فیکس قبلیِ پیغام‌های خطا (oninvalid) در همین صفحه - روی
-    // کانتینر ثابت #from1/#to1 به‌صورت delegated بسته می‌شن؛ این‌طوری فرقی
-    // نمی‌کنه اینپوت اصلی مخفی شده باشه یا اینپوت نمایشیِ جدید جایگزینش شده
-    // باشه. (2026-08-27)
-
+    // استفاده مستقیم از IDهایی که در HTML گذاشتید
+    var startDate = $('#from1 input');
+    var endDate = $('#to1 input');
     var deadlineDate = $('#deadline-date');
-
-    function startInputs() { return $('#from1 input'); }
-    function endInputs() { return $('#to1 input'); }
-
-    // مقدار واقعی (dateFormat پیش‌فرض میلادی) همیشه روی اینپوت اصلی نگه
-    // داشته می‌شه؛ چون flatpickr اینپوت نمایشیِ altInput رو همیشه *بعد* از
-    // اینپوت اصلی اضافه می‌کنه، .first() همیشه دقیقاً همون اینپوت اصلی رو
-    // برمی‌گردونه، چه هنوز hidden نشده باشه چه شده باشه.
-    function currentStartVal() { return startInputs().first().val().trim(); }
-    function currentEndVal() { return endInputs().first().val().trim(); }
-
-    // توجه: برخلاف فرم «ثبت دوره»، اینجا (ویرایش) تاریخ شروع/اتمام از قبل
-    // مقدار دارن، پس مثل قبل هیچ غیرفعال‌سازیِ اولیه‌ای روی بار اول صفحه
-    // انجام نمی‌دیم (دقیقاً همون رفتار قبلی که این دو خط کامنت بودن حفظ شده).
-    // endInputs().prop('disabled', true);
+    // پیدا کردن deadline از طریق DOM
+    // var deadlineDiv = $('#from1').next().next();
+    // var deadlineDate = deadlineDiv.find('input');
+    
+    // غیرفعال کردن اولیه
+    // endDate.prop('disabled', true);
     // deadlineDate.prop('disabled', true);
-
+    
     // تابع برای اعتبارسنجی تاریخ اتمام
     function validateEndDate() {
-        var startVal = currentStartVal();
-        var endVal = currentEndVal();
-
+        var startVal = startDate.val().trim();
+        var endVal = endDate.val().trim();
+        
         // اگر تاریخ شروع وجود ندارد
         if (!startVal) {
-            endInputs().prop('disabled', true);
+            endDate.prop('disabled', true);
             return false;
         }
-
+        
         // اگر تاریخ اتمام خالی است
         if (!endVal) {
             deadlineDate.val('');
             deadlineDate.prop('disabled', true);
             return false;
         }
-
+        
         var start = new Date(startVal);
         var end = new Date(endVal);
-
+        
         // بررسی اعتبار
         if (end <= start) {
             // فقط یک بار پیام نشان بده
-            if (!endInputs().hasClass('error-shown')) {
-                endInputs().addClass('error-shown');
+            if (!endDate.hasClass('error-shown')) {
+                endDate.addClass('error-shown');
             }
-            endInputs().val('');
+            endDate.val('');
             deadlineDate.val('');
             deadlineDate.prop('disabled', true);
             return false;
         } else {
             // اگر تاریخ درست بود، کلاس خطا را حذف کن
-            endInputs().removeClass('error-shown');
-
+            endDate.removeClass('error-shown');
+            
             // محاسبه deadline
             calculateDeadline(start, end);
             return true;
         }
     }
-
+    
     // تابع محاسبه deadline
     function calculateDeadline(start, end) {
         var diff = end.getTime() - start.getTime();
         var quarter = diff / 4;
         var deadline = new Date(start.getTime() + quarter);
-
+        
         // فرمت تاریخ
-        var deadlineStr = deadline.getFullYear() + '/' +
-                         String(deadline.getMonth() + 1).padStart(2, '0') + '/' +
+        var deadlineStr = deadline.getFullYear() + '/' + 
+                         String(deadline.getMonth() + 1).padStart(2, '0') + '/' + 
                          String(deadline.getDate()).padStart(2, '0');
-
+        
         deadlineDate.val(deadlineStr);
         deadlineDate.prop('disabled', false);
     }
-
-    // رویداد تغییر تاریخ شروع - delegated روی کانتینر ثابت #from1 (نه خودِ
-    // اینپوت‌های داخلش)، تا چه اینپوت اصلیِ مخفی‌شده تغییر کنه چه اینپوت
-    // نمایشیِ altInput، درست کار کنه.
-    $('#from1').on('change input', 'input', function() {
-        var startVal = currentStartVal();
-
+    
+    // رویداد تغییر تاریخ شروع
+    startDate.on('change', function() {
+        var startVal = $(this).val().trim();
+        
         if (startVal) {
-            endInputs().prop('disabled', false);
-            endInputs().val('');
+            endDate.prop('disabled', false);
+            endDate.val('');
             deadlineDate.val('');
             deadlineDate.prop('disabled', true);
         } else {
-            endInputs().prop('disabled', true);
+            endDate.prop('disabled', true);
             deadlineDate.prop('disabled', true);
-            endInputs().val('');
+            endDate.val('');
             deadlineDate.val('');
         }
-
+        
         // اگر تاریخ اتمام پر شده بود، دوباره اعتبارسنجی کن
-        if (currentEndVal()) {
+        if (endDate.val().trim()) {
             validateEndDate();
         }
     });
-
-    // چند رویداد برای تاریخ اتمام - این‌ها هم delegated روی #to1 هستن
-    $('#to1').on('change', 'input', validateEndDate);
-
+    
+    // چند رویداد برای تاریخ اتمام
+    endDate.on('change', validateEndDate);
+    
     // رویداد blur (وقتی از فیلد خارج می‌شود)
-    $('#to1').on('blur', 'input', function() {
+    endDate.on('blur', function() {
         if ($(this).val().trim()) {
             validateEndDate();
         }
     });
-
+    
     // رویداد input (تایپ لحظه‌ای - اختیاری)
-    $('#to1').on('input', 'input', function() {
+    endDate.on('input', function() {
         // فقط وقتی مقدار کامل به نظر می‌رسد اعتبارسنجی کن
-        if (currentEndVal().length >= 8) { // حداقل طول یک تاریخ
+        var val = $(this).val().trim();
+        if (val.length >= 8) { // حداقل طول یک تاریخ
             validateEndDate();
         }
     });
-
+    
 });
 JS;
 
@@ -910,48 +851,6 @@ $(document).ready(function() {
 JS;
 
 $this->registerJs($jss);
-
-// ===== قیمت با تخفیف نباید بیشتر از قیمت اصلی باشد =====
-// این فقط یک هشدار زودهنگام سمت مرورگره (تجربه‌ی کاربری بهتر)؛ منبع واقعی و
-// تضمین‌شده همون قانون سمت سرور Courses::validateDiscountNotAbovePrice()
-// هست که مساوی بودن (یعنی «بدون تخفیف») رو مجاز می‌دونه و فقط بیشتر بودن
-// واقعی رو رد می‌کنه - این اسکریپت هم دقیقاً همون منطق رو پیاده می‌کنه (عیناً
-// همون چیزی که در فرم «ثبت دوره» هم اضافه شده). (2026-08-27)
-$discountCheck = <<<JS
-$(document).ready(function() {
-    var priceInput = document.getElementById('courses-price');
-    var discountInput = document.getElementById('courses-discount_price');
-    if (!priceInput || !discountInput) {
-        return;
-    }
-
-    function checkDiscount() {
-        var price = parseFloat(priceInput.value);
-        var discount = parseFloat(discountInput.value);
-        if (discountInput.value.trim() === '' || isNaN(discount) || isNaN(price)) {
-            discountInput.setCustomValidity('');
-            return;
-        }
-        if (discount > price) {
-            discountInput.setCustomValidity('قیمت با تخفیف نمی‌تواند بیشتر از قیمت اصلی باشد');
-        } else {
-            discountInput.setCustomValidity('');
-        }
-    }
-
-    priceInput.addEventListener('input', checkDiscount);
-    priceInput.addEventListener('change', checkDiscount);
-    discountInput.addEventListener('input', checkDiscount);
-    discountInput.addEventListener('change', checkDiscount);
-    discountInput.addEventListener('blur', function() {
-        checkDiscount();
-        if (!discountInput.validity.valid) {
-            discountInput.reportValidity();
-        }
-    });
-});
-JS;
-$this->registerJs($discountCheck);
 
 $digit = <<< JS
 
@@ -1153,247 +1052,6 @@ $this->registerJs($digit);
             </span>
         </div>
     </nav>
-    <?php
-    // ===== نمودار مراحل وضعیت دوره (Course Status Stepper) - تغییر ۱۱ (2026-08-28) =====
-    // فقط نمایشیه: هیچ رفتار ویزارد/تغییر مرحله‌ای نداره، هیچ اقدامی رو انجام
-    // نمی‌ده و کاربر نمی‌تونه با کلیک روش وضعیت دوره رو عوض کنه - صرفاً بر
-    // اساس $model->status (مقادیر ۰ تا ۹، دقیقاً همون مقادیر مستندشده) ساخته
-    // می‌شه. مسیر «کارگزار» در برابر مسیر «دانشکده» با حضور/عدم‌حضور
-    // $model->broker تشخیص داده می‌شه؛ هر دو مسیر توی وضعیت ۲ (در انتظار
-    // بررسی مدیر سیستم) به هم می‌رسن، چون از اونجا به بعد گردش‌کار مشترکه.
-    // رنگ‌ها فقط از کلاس‌های آماده‌ی خود قالب (bg-success/bg-primary/...) میان
-    // - هیچ رنگ ثابت جدیدی تعریف نشده تا کاملاً هم‌رنگ بقیه‌ی پروژه بمونه.
-    $courseStepperBrokerInfo = $model->broker;
-    $courseStepperHasBroker = false;
-    if (is_array($courseStepperBrokerInfo)) {
-        $courseStepperHasBroker = !empty($courseStepperBrokerInfo['_id']);
-    } elseif (is_object($courseStepperBrokerInfo)) {
-        $courseStepperHasBroker = !empty($courseStepperBrokerInfo->_id);
-    }
-
-    if ($courseStepperHasBroker) {
-        $courseStepperSteps = [
-            ['label' => 'ثبت دوره', 'subtitle' => 'توسط کارگزار', 'icon' => 'bx-briefcase-alt-2'],
-            ['label' => 'بررسی دانشکده', 'subtitle' => 'تائید یا اصلاح', 'icon' => 'bx-buildings'],
-            ['label' => 'بررسی مدیر سیستم', 'subtitle' => 'تائید یا اصلاح', 'icon' => 'bx-user-check'],
-            ['label' => 'فعال‌سازی دوره', 'subtitle' => '', 'icon' => 'bx-play-circle'],
-            ['label' => 'پایان دوره', 'subtitle' => '', 'icon' => 'bx-flag-checkered'],
-        ];
-    } else {
-        $courseStepperSteps = [
-            ['label' => 'ثبت دوره', 'subtitle' => 'توسط دانشکده', 'icon' => 'bx-edit-alt'],
-            ['label' => 'بررسی مدیر سیستم', 'subtitle' => 'تائید یا اصلاح', 'icon' => 'bx-user-check'],
-            ['label' => 'فعال‌سازی دوره', 'subtitle' => '', 'icon' => 'bx-play-circle'],
-            ['label' => 'پایان دوره', 'subtitle' => '', 'icon' => 'bx-flag-checkered'],
-        ];
-    }
-    $courseStepperStates = array_fill(0, count($courseStepperSteps), 'upcoming');
-    $courseStepperBanner = null;
-    $courseStepperStatus = (string) $model->status;
-
-    if ($courseStepperHasBroker) {
-        switch ($courseStepperStatus) {
-            case '3': // پیش‌نویس - حتی دوره‌های دارای کارگزار می‌تونن قبل از
-                      // ارسال برای دانشکده توی این وضعیت باشن (داده‌ی واقعی
-                      // این رو تائید کرد - 2026-08-28)
-                $courseStepperStates[0] = 'current';
-                break;
-            case '7': // ثبت‌شده توسط کارگزار، در انتظار بررسی دانشکده
-                $courseStepperStates[0] = 'done';
-                $courseStepperStates[1] = 'current';
-                break;
-            case '8': // دانشکده برای اصلاح به کارگزار برگردونده
-                $courseStepperStates[0] = 'done';
-                $courseStepperStates[1] = 'warning';
-                $courseStepperBanner = 'این دوره توسط دانشکده برای اصلاح به کارگزار بازگردانده شده است';
-                break;
-            case '9': // دانشکده رد کرده
-                $courseStepperStates[0] = 'done';
-                $courseStepperStates[1] = 'danger';
-                $courseStepperBanner = 'این دوره توسط دانشکده رد شده است';
-                break;
-            case '2': // دانشکده تائید کرده، در انتظار مدیر سیستم
-                $courseStepperStates[0] = 'done';
-                $courseStepperStates[1] = 'done';
-                $courseStepperStates[2] = 'current';
-                break;
-            case '4': // مدیر سیستم برای اصلاح برگردونده
-                $courseStepperStates[0] = 'done';
-                $courseStepperStates[1] = 'done';
-                $courseStepperStates[2] = 'warning';
-                $courseStepperBanner = 'این دوره توسط مدیر سیستم برای اصلاح بازگردانده شده است';
-                break;
-            case '5': // مدیر سیستم رد کرده
-                $courseStepperStates[0] = 'done';
-                $courseStepperStates[1] = 'done';
-                $courseStepperStates[2] = 'danger';
-                $courseStepperBanner = 'این دوره توسط مدیر سیستم رد شده است';
-                break;
-            case '1': // تائید شده و فعال
-                $courseStepperStates[0] = 'done';
-                $courseStepperStates[1] = 'done';
-                $courseStepperStates[2] = 'done';
-                $courseStepperStates[3] = 'current';
-                break;
-            case '0': // تائید شده ولی غیرفعال
-                $courseStepperStates[0] = 'done';
-                $courseStepperStates[1] = 'done';
-                $courseStepperStates[2] = 'done';
-                $courseStepperStates[3] = 'current-inactive';
-                $courseStepperBanner = 'این دوره تائید شده اما در حال حاضر غیرفعال است';
-                break;
-            case '6': // پایان یافته
-                $courseStepperStates = array_fill(0, count($courseStepperSteps), 'done');
-                break;
-            default:
-                $courseStepperStates[0] = 'current';
-        }
-    } else {
-        switch ($courseStepperStatus) {
-            case '3': // پیش‌نویس - هنوز ارسال نشده
-                $courseStepperStates[0] = 'current';
-                break;
-            case '2': // ارسال شده، در انتظار مدیر سیستم
-                $courseStepperStates[0] = 'done';
-                $courseStepperStates[1] = 'current';
-                break;
-            case '4': // مدیر سیستم برای اصلاح برگردونده
-                $courseStepperStates[0] = 'done';
-                $courseStepperStates[1] = 'warning';
-                $courseStepperBanner = 'این دوره توسط مدیر سیستم برای اصلاح بازگردانده شده است';
-                break;
-            case '5': // مدیر سیستم رد کرده
-                $courseStepperStates[0] = 'done';
-                $courseStepperStates[1] = 'danger';
-                $courseStepperBanner = 'این دوره توسط مدیر سیستم رد شده است';
-                break;
-            case '1': // تائید شده و فعال
-                $courseStepperStates[0] = 'done';
-                $courseStepperStates[1] = 'done';
-                $courseStepperStates[2] = 'current';
-                break;
-            case '0': // تائید شده ولی غیرفعال
-                $courseStepperStates[0] = 'done';
-                $courseStepperStates[1] = 'done';
-                $courseStepperStates[2] = 'current-inactive';
-                $courseStepperBanner = 'این دوره تائید شده اما در حال حاضر غیرفعال است';
-                break;
-            case '6': // پایان یافته
-                $courseStepperStates = array_fill(0, count($courseStepperSteps), 'done');
-                break;
-            default:
-                // وضعیت‌های ۷/۸/۹ مخصوص مسیر کارگزارن؛ اگه دوره‌ی بدون کارگزاری
-                // (داده‌ی غیرمنتظره) به این وضعیت‌ها برسه، محافظه‌کارانه از
-                // مرحله‌ی اول شروع می‌کنیم تا استپر خراب نشه.
-                $courseStepperStates[0] = 'current';
-        }
-    }
-
-    $courseStepperStateClasses = [
-        'done' => 'bg-success border-success text-white',
-        'current' => 'bg-primary border-primary text-white',
-        'current-inactive' => 'bg-label-secondary border-secondary text-secondary',
-        'warning' => 'bg-warning border-warning text-white',
-        'danger' => 'bg-danger border-danger text-white',
-        'upcoming' => 'bg-label-secondary border-secondary-subtle text-muted',
-    ];
-    $courseStepperLineFilledUpTo = 0;
-    foreach ($courseStepperStates as $i => $st) {
-        if ($st !== 'upcoming') {
-            $courseStepperLineFilledUpTo = $i;
-        }
-    }
-    ?>
-    <style>
-        .course-stepper-track {
-            display: flex;
-            align-items: flex-start;
-            width: 100%;
-            padding: 4px 4px 0;
-        }
-        .course-stepper-step {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            text-align: center;
-            flex: 0 0 auto;
-            min-width: 84px;
-        }
-        .course-stepper-line {
-            flex: 1 1 auto;
-            height: 3px;
-            margin: 22px 6px 0;
-            border-radius: 2px;
-        }
-        .course-stepper-circle {
-            width: 46px;
-            height: 46px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.2rem;
-            border-width: 2px;
-            border-style: solid;
-            transition: opacity .2s ease;
-        }
-        .course-stepper-step.is-upcoming .course-stepper-circle {
-            opacity: .6;
-        }
-        .course-stepper-label {
-            margin-top: 8px;
-        }
-        .course-stepper-title {
-            display: block;
-            font-size: .8125rem;
-            font-weight: 600;
-        }
-        .course-stepper-subtitle {
-            display: block;
-            font-size: .7rem;
-            opacity: .75;
-        }
-        .course-stepper-banner {
-            margin-top: 10px;
-            padding: 8px 14px;
-            border-radius: 6px;
-            font-size: .8125rem;
-        }
-        @media (max-width: 767px) {
-            .course-stepper-subtitle { display: none; }
-            .course-stepper-circle { width: 34px; height: 34px; font-size: 1rem; }
-            .course-stepper-title { font-size: .68rem; }
-            .course-stepper-step { min-width: 52px; }
-            .course-stepper-line { margin-top: 16px; }
-        }
-    </style>
-    <div class="card mb-3">
-        <div class="card-body pb-2">
-            <div class="course-stepper-track">
-                <?php foreach ($courseStepperSteps as $i => $courseStepperStep): ?>
-                    <?php if ($i > 0): ?>
-                        <div class="course-stepper-line <?= $i <= $courseStepperLineFilledUpTo ? 'bg-success' : 'bg-label-secondary' ?>"></div>
-                    <?php endif; ?>
-                    <div class="course-stepper-step is-<?= $courseStepperStates[$i] ?>">
-                        <button type="button" class="course-stepper-circle btn p-0 <?= $courseStepperStateClasses[$courseStepperStates[$i]] ?>" disabled tabindex="-1" aria-disabled="true">
-                            <i class="bx <?= htmlspecialchars($courseStepperStep['icon'], ENT_QUOTES, 'UTF-8') ?>"></i>
-                        </button>
-                        <div class="course-stepper-label">
-                            <span class="course-stepper-title"><?= htmlspecialchars($courseStepperStep['label'], ENT_QUOTES, 'UTF-8') ?></span>
-                            <?php if (!empty($courseStepperStep['subtitle'])): ?>
-                                <span class="course-stepper-subtitle"><?= htmlspecialchars($courseStepperStep['subtitle'], ENT_QUOTES, 'UTF-8') ?></span>
-                            <?php endif; ?>
-                        </div>
-                    </div>
-                <?php endforeach; ?>
-            </div>
-            <?php if ($courseStepperBanner !== null): ?>
-                <div class="course-stepper-banner <?= in_array($courseStepperStatus, ['5', '9'], true) ? 'bg-label-danger text-danger' : 'bg-label-warning text-warning' ?>">
-                    <?= htmlspecialchars($courseStepperBanner, ENT_QUOTES, 'UTF-8') ?>
-                </div>
-            <?php endif; ?>
-        </div>
-    </div>
     <div class="card text-center mb-3">
         <div class="card-header d-flex align-items-center justify-content-between">
             <ul class="nav nav-pills" role="tablist">
@@ -1704,18 +1362,6 @@ $this->registerJs($digit);
                                         'required' => true,
                                         'oninvalid' => 'this.setCustomValidity(\'لطفا نوع دوره را مشخص کنید\')',
                                         'oninput' => 'setCustomValidity(\'\')',
-                                        // «محتوا محور» دیگه برای انتخاب/تغییر جدید مجاز نیست؛ ولی چون
-                                        // $courseType همینجا برای نمایش دوره‌های قدیمی هم استفاده می‌شه
-                                        // (شاخه‌ی readonly زیر همین بلوک)، به‌جای حذف از لیست فقط همین
-                                        // گزینه رو غیرفعال می‌کنیم - مگر اینکه مقدار فعلیِ همین دوره دقیقاً
-                                        // همون باشه، تا بشه دوره رو بدون تغییر این فیلد ذخیره کرد. سمت
-                                        // سرور هم توسط Courses::validateContentTypeNotDisabled() همین
-                                        // قانون اجرا می‌شه. (2026-08-27)
-                                        'options' => [
-                                            Courses::CONTENT_TYPE_CONTENT_BASED => [
-                                                'disabled' => $model->content_type !== Courses::CONTENT_TYPE_CONTENT_BASED,
-                                            ],
-                                        ],
                                     ]
                                 )->label(false);
                                 else
@@ -1725,11 +1371,6 @@ $this->registerJs($digit);
                             <div class="col-2 col-md-2 col-sm-12 dol-lg-2 col-xl-2 mb-3">
                                 <label for="nameWithTitle" class="form-label">نوع ظرفیت *</label>
                                 <?php
-                                // مقدار فعلیِ نوع ظرفیت همین دوره (اگه اصلاً ثبت شده باشه) - برای
-                                // تشخیص اینکه آیا گزینه‌ی «نامحدود» باید غیرفعال بشه یا نه.
-                                $currentCapacityType = ($model->student_capacity !== null && isset($model->student_capacity['type']))
-                                    ? $model->student_capacity['type']
-                                    : null;
                                 echo $form->field($model, 'student_capacity[type]')->dropDownList(
                                     $capacityType,
                                     [
@@ -1737,16 +1378,6 @@ $this->registerJs($digit);
                                         'required' => true,
                                         'oninvalid' => 'this.setCustomValidity(\'لطفا نوع ظرفیت دوره را مشخص کنید\')',
                                         'oninput' => 'setCustomValidity(\'\')',
-                                        // گزینه‌ی «نامحدود» دیگه برای انتخاب/تغییر جدید مجاز نیست؛ فقط
-                                        // اگه مقدار فعلیِ همین دوره دقیقاً همینه غیرفعال نمی‌شه، تا بشه
-                                        // دوره رو بدون تغییر این فیلد ذخیره کرد. سمت سرور هم توسط
-                                        // Courses::validateCapacityTypeNotDisabled() همین قانون اجرا
-                                        // می‌شه. (2026-08-27)
-                                        'options' => [
-                                            Courses::CAPACITY_TYPE_UNLIMITED => [
-                                                'disabled' => $currentCapacityType !== Courses::CAPACITY_TYPE_UNLIMITED,
-                                            ],
-                                        ],
                                         'onchange' => '
             $.get( "' . Url::toRoute('/packages/capacity') . '", { id: $(this).val() } )
             .done(function( data ) {
@@ -1776,16 +1407,12 @@ $this->registerJs($digit);
                                     if($model->student_capacity['type'] == '2')
                                     {
                                         echo '<label for="nameWithTitle" class="form-label">ظرفیت *</label>';
-                                        // تغییر ۱ (2026-08-28): همون اصلاح پیغام انگلیسی مرورگر که
-                                        // توی actionCapacity() (نسخه‌ی AJAX همین فیلد) هم اعمال شده.
                                         echo $form->field($model, 'student_capacity[number]')->textInput(
                                             [
 
                                                 'class' => 'form-control numeral-mask text-start',
                                                 'required' => true,
-                                                'type' => 'number',
-                                                'oninvalid' => 'this.setCustomValidity(\'لطفا ظرفیت را به صورت عددی وارد کنید\')',
-                                                'oninput' => 'setCustomValidity(\'\')',
+                                                'type' => 'number'
                                             ]
                                         )->label(false);
                                     }
@@ -1948,10 +1575,6 @@ $this->registerJs($digit);
                                         'prompt' => 'لطفا دانشکده را مشخص کنید',
                                         'class' => 'select2 form-select form-select-lg',
                                         'required' => true,
-                                        // اصلاح ۲۰۲۶-۰۸-۲۸: عیناً همون فیکسِ ایجادِ دوره (create-package.php)
-                                        // برای پیغام انگلیسی پیش‌فرض مرورگر، اینجا (ویرایش) هم اعمال شد.
-                                        'oninvalid' => 'this.setCustomValidity(\'لطفا دانشکده را مشخص کنید\')',
-                                        'oninput' => 'setCustomValidity(\'\')',
                                         'id' => '',
                                         'data-allow-clear' => true,
                                         'onchange' => '
@@ -2038,10 +1661,7 @@ $this->registerJs($digit);
                                                         'prompt' => 'لطفا قرارداد کارگزار را انتخاب کنید',
                                                         'class' => 'select2s form-select',
                                                         'id' => '',
-                                                        'required' => true,
-                                                        // اصلاح ۲۰۲۶-۰۸-۲۸: بدون این، پیغام پیش‌فرض مرورگر انگلیسی بود.
-                                                        'oninvalid' => 'this.setCustomValidity(\'لطفا قرارداد کارگزار را انتخاب کنید\')',
-                                                        'oninput' => 'setCustomValidity(\'\')',
+                                                        'required' => true
                                                     ]
                                                 )->label(false);
                                             else if(array_key_exists('contract', $model->broker))

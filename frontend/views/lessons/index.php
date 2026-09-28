@@ -165,14 +165,7 @@ $this->registerJs($show_off);
                                 <?php
                                 if(Yii::$app->user->identity->role == 'user')
                                 {
-                                    // اصلاح ۲۰۲۶-۰۸-۲۸ (دور ششم): وقتی درس دانشکده‌ای
-                                    // ثبت‌شده نداره (یا دانشکده حذف شده باشه)،
-                                    // college_detail() مقدار null برمی‌گردونه و
-                                    // ->title بدون این چک، خطای انگلیسی PHP
-                                    // (Attempt to read property on null) نشون می‌داد.
-                                    if ($collegeDetail === null)
-                                        echo '<td>ثبت نشده</td>';
-                                    else if(strlen($collegeDetail->title) <= 30)
+                                    if(strlen($collegeDetail->title) <= 30)
                                         echo '<td>'. Html::encode($collegeDetail->title).'</td>';
                                     else
                                     {
