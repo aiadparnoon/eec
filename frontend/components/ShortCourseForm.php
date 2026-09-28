@@ -26,6 +26,8 @@ class ShortCourseForm
 
     /** @var string|null */
     public static $error;
+    /** @var string|null نام فیلد فرم مربوط به خطا (مثل Courses[price]) برای نمایش پیام زیر همان فیلد */
+    public static $errorField;
 
     /**
      * @param Courses $model
@@ -35,7 +37,7 @@ class ShortCourseForm
      */
     public static function apply(Courses $model, $input, $isNew)
     {
-        self::$error = null;
+        self::$error = self::$errorField = null;
         $input = is_array($input) ? $input : [];
         if (!static::applyCommon($model, $input, $isNew))
             return false;
@@ -74,7 +76,7 @@ class ShortCourseForm
         }
         if ($isNew || $isAdmin) {
             if (!CourseAccess::canUseUnit($unit))
-                return self::fail('واحد انتخاب‌شده معتبر نیست یا به آن دسترسی ندارید');
+                return self::fail('واحد انتخاب‌شده معتبر نیست یا به آن دسترسی ندارید', 'Courses[college]');
             $model->college = $unit;
         }
         $unit = (string) $model->college;
@@ -86,11 +88,17 @@ class ShortCourseForm
             'degree_fa' => $str(isset($title['degree_fa']) ? $title['degree_fa'] : ''),
             'degree_en' => $str(isset($title['degree_en']) ? $title['degree_en'] : ''),
         ];
+        if ($model->title['main_fa'] === '')
+            return self::fail('لطفاً عنوان اصلی فارسی را وارد کنید', 'Courses[title][main_fa]');
+        if ($model->title['degree_fa'] === '')
+            return self::fail('لطفاً عنوان فارسی داخل گواهی را وارد کنید', 'Courses[title][degree_fa]');
         foreach (['main_en', 'degree_en'] as $key)
             if ($model->title[$key] !== '' && !preg_match("/^[A-Za-z0-9 .,:;'&()\\-\\/]+$/", $model->title[$key]))
-                return self::fail('عنوان انگلیسی فقط باید با حروف انگلیسی نوشته شود');
+                return self::fail('عنوان انگلیسی فقط باید با حروف انگلیسی نوشته شود', 'Courses[title][' . $key . ']');
 
         $model->price = $digits(isset($input['price']) ? $input['price'] : '');
+        if (!ctype_digit((string) $model->price) || (int) $model->price < 1)
+            return self::fail('لطفاً قیمت اصلی دوره را به تومان وارد کنید', 'Courses[price]');
         // بند ۵.۲ صورتجلسه: کارگزار و کارشناس واحد تخفیف شهریه ثبت نمی‌کنند
         // در ویرایش، تخفیفی که مدیر سیستم قبلاً ثبت کرده با ذخیره‌ی غیرمدیر از بین نمی‌رود
         $previousDiscount = $isNew ? '' : (string) $model->getOldAttribute('discount_price');
@@ -101,30 +109,36 @@ class ShortCourseForm
                 ? $previousDiscount
                 : $model->price;
         if (ctype_digit((string) $model->discount_price) && ctype_digit((string) $model->price) && (int) $model->discount_price > (int) $model->price)
-            return self::fail('قیمت با تخفیف نمی‌تواند از قیمت اصلی بیشتر باشد');
+            return self::fail('قیمت با تخفیف نمی‌تواند از قیمت اصلی بیشتر باشد', 'Courses[discount_price]');
         if ($model->discount_price === '')
             $model->discount_price = $model->price;
 
         $duration = $digits(isset($input['duration']) ? $input['duration'] : '');
         if (($durationError = static::durationError($duration)) !== null)
-            return self::fail($durationError);
+            return self::fail($durationError, 'Courses[duration]');
         $model->duration = $duration;
 
         $model->time = $str(isset($input['time']) ? $input['time'] : '', 100);
         $model->place = $str(isset($input['place']) ? $input['place'] : '', 200);
+        if ($model->time === '')
+            return self::fail('لطفاً زمان برگزاری دوره را وارد کنید', 'Courses[time]');
+        if ($model->place === '')
+            return self::fail('لطفاً محل برگزاری دوره را وارد کنید', 'Courses[place]');
         $contentType = isset($input['content_type']) && is_scalar($input['content_type']) ? (string) $input['content_type'] : '';
         // «محتوامحور» فقط برای دوره‌های قدیمی که از قبل همین مقدار را دارند باقی می‌ماند (validator مدل)
         if (!isset(static::CONTENT_TYPES[$contentType]) && !($contentType === '3' && !$isNew))
-            return self::fail('نوع دوره معتبر نیست');
+            return self::fail($contentType === '' ? 'لطفاً نوع دوره را انتخاب کنید' : 'نوع دوره معتبر نیست', 'Courses[content_type]');
         $model->content_type = $contentType;
 
         $capacity = isset($input['student_capacity']) && is_array($input['student_capacity']) ? $input['student_capacity'] : [];
         $capacityType = isset($capacity['type']) && is_scalar($capacity['type']) ? (string) $capacity['type'] : '';
+        if ($capacityType === '')
+            return self::fail('لطفاً نوع ظرفیت را انتخاب کنید', 'Courses[student_capacity][type]');
         $model->student_capacity = ['type' => $capacityType];
         if ($capacityType === Courses::CAPACITY_TYPE_LIMITED) {
             $number = $digits(isset($capacity['number']) ? $capacity['number'] : '');
             if (!ctype_digit($number) || (int) $number < 1)
-                return self::fail('برای ظرفیت محدود، تعداد ظرفیت را به‌صورت عدد وارد کنید');
+                return self::fail('برای ظرفیت محدود، تعداد ظرفیت را به‌صورت عدد وارد کنید', 'Courses[student_capacity][number]');
             $model->student_capacity = ['type' => $capacityType, 'number' => (string) (int) $number];
         }
 
@@ -166,7 +180,7 @@ class ShortCourseForm
             return true;
         $server = ClassroomServers::findById($value);
         if ($server === null || !$server->active)
-            return self::fail('سرور برگزاری کلاس را انتخاب کنید (یا «هیچ‌کدام» اگر کلاس در سامانه‌ی دیگری برگزار می‌شود)');
+            return self::fail('سرور برگزاری کلاس را انتخاب کنید (یا «هیچ‌کدام» اگر کلاس در سامانه‌ی دیگری برگزار می‌شود)', 'Courses[classroom_server]');
         $model->classroom_server = (string) $server->_id;
         return true;
     }
@@ -192,17 +206,17 @@ class ShortCourseForm
             return true;
         }
         if (!preg_match('/^[a-f0-9]{24}$/i', $brokerId))
-            return self::fail('کارگزار انتخاب‌شده معتبر نیست');
+            return self::fail('کارگزار انتخاب‌شده معتبر نیست', 'Courses[broker][_id]');
         $record = Brokers::findOne($brokerId);
         if ($record === null || (string) $record->status !== '1' || !in_array($unit, StudentAccess::normalizeColleges($record->college), true))
-            return self::fail('کارگزار انتخاب‌شده متعلق به این واحد نیست یا فعال نیست');
+            return self::fail('کارگزار انتخاب‌شده متعلق به این واحد نیست یا فعال نیست', 'Courses[broker][_id]');
         $contract = isset($broker['contract']) && is_scalar($broker['contract']) ? (string) $broker['contract'] : '';
         $contractIds = [];
         foreach ((array) $record->contracts as $item)
             if (is_array($item) && isset($item['id']))
                 $contractIds[] = (string) $item['id'];
         if ($contract === '' || !in_array($contract, $contractIds, true))
-            return self::fail('قرارداد کارگزار را انتخاب کنید');
+            return self::fail('قرارداد کارگزار را انتخاب کنید', 'Courses[broker][contract]');
         $model->broker = ['_id' => $brokerId, 'contract' => $contract];
         return true;
     }
@@ -217,9 +231,9 @@ class ShortCourseForm
         $lessonId = isset($lessons['_id']) && is_string($lessons['_id']) ? $lessons['_id'] : '';
         $teacherId = isset($lessons['teachers']) && is_string($lessons['teachers']) ? $lessons['teachers'] : '';
         if (!preg_match('/^[a-f0-9]{24}$/i', $lessonId) || !Lessons::find()->where(['_id' => $lessonId, 'college' => $unit])->exists())
-            return self::fail('درس دوره را از دروس همین واحد انتخاب کنید');
+            return self::fail('درس دوره را از دروس همین واحد انتخاب کنید', 'Courses[lessons][0][_id]');
         if (!preg_match('/^[a-f0-9]{24}$/i', $teacherId) || !Teachers::find()->where(['_id' => $teacherId])->exists())
-            return self::fail('مدرس دوره را انتخاب کنید');
+            return self::fail('مدرس دوره را انتخاب کنید', 'Courses[lessons][0][teachers]');
 
         $date = isset($lessons['date']) && is_array($lessons['date']) ? $lessons['date'] : [];
         $oldDate = isset($old['date']) && is_array($old['date']) ? $old['date'] : [];
@@ -231,13 +245,13 @@ class ShortCourseForm
             $fromTs = $from === null ? null : self::toTimestamp($from);
             $toTs = $to === null ? null : self::toTimestamp($to);
             if ($fromTs === null || $toTs === null)
-                return self::fail('تاریخ شروع و پایان دوره را درست وارد کنید');
+                return self::fail('تاریخ شروع و پایان دوره را درست وارد کنید', 'Courses[lessons][0][date][' . ($fromTs === null ? 'from' : 'to') . ']');
             // تاریخ پایان حداقل یک روز بعد از تاریخ شروع
             if (strcmp($to, $from) <= 0 || $toTs - $fromTs < 86400 - 3600)
-                return self::fail('تاریخ پایان دوره باید حداقل یک روز بعد از تاریخ شروع باشد');
+                return self::fail('تاریخ پایان دوره باید حداقل یک روز بعد از تاریخ شروع باشد', 'Courses[lessons][0][date][to]');
         }
         if (!preg_match('/^([01]?\d|2[0-3]):[0-5]\d$/', UsersSearch::normalizeDigits($time)))
-            return self::fail('ساعت شروع دوره را به شکل ۱۸:۳۰ وارد کنید');
+            return self::fail('ساعت شروع دوره را به شکل ۱۸:۳۰ وارد کنید', 'Courses[lessons][0][date][time]');
 
         $lesson = [
             '_id' => $lessonId,
@@ -287,9 +301,10 @@ class ShortCourseForm
         return $jalali === null ? null : UsersSearch::jalaliToTimestamp(str_replace('-', '/', $jalali), false);
     }
 
-    protected static function fail($message)
+    protected static function fail($message, $field = null)
     {
         self::$error = $message;
+        self::$errorField = $field;
         return false;
     }
 }

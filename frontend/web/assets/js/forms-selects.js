@@ -5,7 +5,9 @@
 "use strict";
 $(function () {
   const selectPicker = $(".selectpicker"),
-    select2 = $(".select2"),
+    // فقط خود <select>ها و آن‌هایی که هنوز select2 نشده‌اند؛ «.select2» کلاس جعبه‌ی ساخته‌شده‌ی select2 هم هست
+    // و قبلاً روی همان جعبه یک select2 خالی دوم ساخته می‌شد (کامبوباکس‌های بدون گزینه).
+    select2 = $("select.select2").not(".select2-hidden-accessible"),
     select2Icons = $(".select2-icons");
 
   // Bootstrap Select

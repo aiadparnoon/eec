@@ -298,6 +298,8 @@ $this->registerJs($tab);
 \frontend\assets\DateRangeAsset::register($this);
 // همه‌ی فیلدهای انتخابی صفحه با جست‌وجو؛ بعد از بارگذاری کامل تا با مقداردهی‌های قدیمی صفحه تداخل نکند
 \frontend\assets\SelectSearchAsset::register($this);
+\frontend\assets\FormValidateAsset::register($this);
+$this->registerJs("EecValidate.bind(document.getElementById('course-edit-form'), {ajax: true});", \yii\web\View::POS_END);
 $this->registerJs("$(window).on('load', function () { EecSelect.init(document.querySelector('.container-xxl')); });", \yii\web\View::POS_END);
 $this->registerJs("EecDateRange.bind(document.getElementById('start-date'), document.getElementById('end-date'));");
 $url = Yii::$app->urlManager->createAbsoluteUrl('packages/show_user_detail','https');
@@ -1085,8 +1087,10 @@ $this->registerJs($digit);
                 <div class="card-body">
                     <?php $form = ActiveForm::begin(
                         [
+                            'id' => 'course-edit-form',
                             'action' => ['edit'],
                             "method" => "post",
+                            'enableClientScript' => false,
                             'options' => [
                                 // 'enctype' => 'multipart/form-data'
                             ],

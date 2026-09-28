@@ -27,7 +27,7 @@ class PackageForm extends ShortCourseForm
 
     public static function apply(Courses $model, $input, $isNew)
     {
-        self::$error = null;
+        self::$error = self::$errorField = null;
         $input = is_array($input) ? $input : [];
         if (!static::applyCommon($model, $input, $isNew))
             return false;
@@ -47,7 +47,7 @@ class PackageForm extends ShortCourseForm
             || (string) $model->getOldAttribute('discount_price') !== (string) $model->discount_price
             || json_encode($model->getOldAttribute('date')) !== json_encode($model->date);
         if ($changed && !self::checkPlan($model))
-            return self::fail(self::$error . ' — ابتدا شرایط اقساطی را در تب «اقساط» اصلاح کنید.');
+            return self::fail(self::$error . ' — ابتدا شرایط اقساطی را در تب «اقساط» اصلاح کنید.', 'Courses[price]');
         return true;
     }
 
@@ -71,9 +71,9 @@ class PackageForm extends ShortCourseForm
             $from = self::jalaliDate(isset($date['from']) ? $date['from'] : '');
             $to = self::jalaliDate(isset($date['to']) ? $date['to'] : '');
             if ($from === null || $to === null)
-                return self::fail('تاریخ شروع و اتمام دوره را درست وارد کنید');
+                return self::fail('تاریخ شروع و اتمام دوره را درست وارد کنید', 'Courses[date][' . ($from === null ? 'from' : 'to') . ']');
             if (strcmp($to, $from) <= 0)
-                return self::fail('تاریخ اتمام دوره باید حداقل یک روز بعد از تاریخ شروع باشد');
+                return self::fail('تاریخ اتمام دوره باید حداقل یک روز بعد از تاریخ شروع باشد', 'Courses[date][to]');
         } else {
             $from = isset($old['from']) ? (string) $old['from'] : '';
             $to = isset($old['to']) ? (string) $old['to'] : '';
@@ -90,20 +90,20 @@ class PackageForm extends ShortCourseForm
     {
         $rows = isset($input['lessons']) && is_array($input['lessons']) ? array_values($input['lessons']) : [];
         if (empty($rows))
-            return self::fail('حداقل یک درس برای دوره انتخاب کنید');
+            return self::fail('حداقل یک درس برای دوره انتخاب کنید', 'lessons-select');
         if (count($rows) > self::MAX_LESSONS)
-            return self::fail('تعداد دروس بیش از حد مجاز است');
+            return self::fail('تعداد دروس بیش از حد مجاز است', 'lessons-select');
         $ids = [];
         foreach ($rows as $row)
             if (is_array($row) && isset($row['_id']) && is_string($row['_id']) && preg_match('/^[a-f0-9]{24}$/i', $row['_id']))
                 $ids[] = $row['_id'];
         if (count($ids) !== count($rows) || count(array_unique($ids)) !== count($ids))
-            return self::fail('دروس انتخاب‌شده معتبر نیستند (هر درس فقط یک بار)');
+            return self::fail('دروس انتخاب‌شده معتبر نیستند (هر درس فقط یک بار)', 'lessons-select');
         $titles = [];
         foreach (Lessons::find()->select(['title'])->where(['_id' => $ids, 'college' => $unit])->all() as $lesson)
             $titles[(string) $lesson->_id] = (string) $lesson->title;
         if (count($titles) !== count($ids))
-            return self::fail('همه‌ی دروس باید از دروس همین واحد باشند');
+            return self::fail('همه‌ی دروس باید از دروس همین واحد باشند', 'lessons-select');
         $teacherIds = [];
         foreach ($rows as $row)
             if (isset($row['teachers']) && is_string($row['teachers']) && preg_match('/^[a-f0-9]{24}$/i', $row['teachers']))
@@ -116,27 +116,27 @@ class PackageForm extends ShortCourseForm
         $from = (string) $model->date['from'];
         $to = (string) $model->date['to'];
         $lessons = [];
-        foreach ($rows as $row) {
+        foreach ($rows as $i => $row) {
             $id = $row['_id'];
             $name = '«' . $titles[$id] . '»';
             $teacher = isset($row['teachers']) && is_string($row['teachers']) ? $row['teachers'] : '';
             if (!isset($validTeachers[$teacher]))
-                return self::fail('مدرس درس ' . $name . ' را از مدرسان همین واحد انتخاب کنید');
+                return self::fail('مدرس درس ' . $name . ' را از مدرسان همین واحد انتخاب کنید', 'Courses[lessons][' . $i . '][teachers]');
             $date = isset($row['date']) && is_array($row['date']) ? $row['date'] : [];
             $lessonFrom = self::jalaliDate(isset($date['from']) ? $date['from'] : '');
             $lessonTo = self::jalaliDate(isset($date['to']) ? $date['to'] : '');
             if ($lessonFrom === null || $lessonTo === null)
-                return self::fail('تاریخ شروع و اتمام درس ' . $name . ' را درست وارد کنید');
+                return self::fail('تاریخ شروع و اتمام درس ' . $name . ' را درست وارد کنید', 'Courses[lessons][' . $i . '][date][' . ($lessonFrom === null ? 'from' : 'to') . ']');
             if (strcmp($lessonTo, $lessonFrom) < 0)
-                return self::fail('تاریخ اتمام درس ' . $name . ' نباید قبل از تاریخ شروع آن باشد');
+                return self::fail('تاریخ اتمام درس ' . $name . ' نباید قبل از تاریخ شروع آن باشد', 'Courses[lessons][' . $i . '][date][to]');
             if (strcmp($lessonFrom, $from) < 0 || strcmp($lessonTo, $to) > 0)
-                return self::fail('تاریخ‌های درس ' . $name . ' باید داخل بازه‌ی برگزاری دوره باشد');
+                return self::fail('تاریخ‌های درس ' . $name . ' باید داخل بازه‌ی برگزاری دوره باشد', 'Courses[lessons][' . $i . '][date][' . (strcmp($lessonFrom, $from) < 0 ? 'from' : 'to') . ']');
             $time = isset($date['time']) && is_scalar($date['time']) ? UsersSearch::normalizeDigits(trim((string) $date['time'])) : '';
             if (!preg_match('/^([01]?\d|2[0-3]):[0-5]\d$/', $time))
-                return self::fail('ساعت شروع درس ' . $name . ' را به شکل ۱۸:۳۰ وارد کنید');
+                return self::fail('ساعت شروع درس ' . $name . ' را به شکل ۱۸:۳۰ وارد کنید', 'Courses[lessons][' . $i . '][date][time]');
             $hours = isset($date['duration']) && is_scalar($date['duration']) ? UsersSearch::normalizeDigits(trim((string) $date['duration'])) : '';
             if (!ctype_digit($hours) || (int) $hours < 1 || (int) $hours > 500)
-                return self::fail('مدت زمان درس ' . $name . ' را به ساعت وارد کنید');
+                return self::fail('مدت زمان درس ' . $name . ' را به ساعت وارد کنید', 'Courses[lessons][' . $i . '][date][duration]');
             $lessons[] = [
                 '_id' => $id,
                 'teachers' => $teacher,
@@ -166,6 +166,7 @@ class PackageForm extends ShortCourseForm
      */
     public static function applyInstallments(Courses $model, $prepayment, $rows)
     {
+        self::$error = self::$errorField = null;
         $digits = function ($value) {
             return is_scalar($value) ? preg_replace('/\s|,/', '', UsersSearch::normalizeDigits((string) $value)) : '';
         };
@@ -200,11 +201,11 @@ class PackageForm extends ShortCourseForm
         if (empty($plan) && ($prepayment === '' || $prepayment === null))
             return true;
         if (empty($plan))
-            return self::fail('برای شرایط اقساطی حداقل یک قسط وارد کنید (یا پیش‌پرداخت را هم خالی بگذارید تا دوره نقدی باشد)');
+            return self::fail('برای شرایط اقساطی حداقل یک قسط وارد کنید (یا پیش‌پرداخت را هم خالی بگذارید تا دوره نقدی باشد)', 'installments-total');
         if (count($plan) > self::MAX_INSTALLMENTS)
-            return self::fail('حداکثر ' . self::MAX_INSTALLMENTS . ' قسط مجاز است');
+            return self::fail('حداکثر ' . self::MAX_INSTALLMENTS . ' قسط مجاز است', 'installments-total');
         if (!ctype_digit($prepayment) || (int) $prepayment < 1)
-            return self::fail('مبلغ پیش‌پرداخت را به تومان وارد کنید');
+            return self::fail('مبلغ پیش‌پرداخت را به تومان وارد کنید', 'prepayment_installments');
         $from = is_array($model->date) && isset($model->date['from']) ? (string) $model->date['from'] : '';
         $to = is_array($model->date) && isset($model->date['to']) ? (string) $model->date['to'] : '';
         $sum = (int) $prepayment;
@@ -214,15 +215,15 @@ class PackageForm extends ShortCourseForm
             $deadline = self::jalaliDate(isset($row['deadline']) ? $row['deadline'] : '');
             $amount = isset($row['amount']) ? (string) $row['amount'] : '';
             if ($deadline === null)
-                return self::fail('تاریخ سررسید ' . $number . ' را درست وارد کنید');
+                return self::fail('تاریخ سررسید ' . $number . ' را درست وارد کنید', 'installments[' . $i . '][deadline]');
             if (!ctype_digit($amount) || (int) $amount < 1)
-                return self::fail('مبلغ ' . $number . ' را به تومان وارد کنید');
+                return self::fail('مبلغ ' . $number . ' را به تومان وارد کنید', 'installments[' . $i . '][amount]');
             if ($from !== '' && strcmp($deadline, $from) < 0)
-                return self::fail('سررسید ' . $number . ' (' . UsersImport::faDigits(str_replace('-', '/', $deadline)) . ') نمی‌تواند قبل از شروع دوره (' . UsersImport::faDigits(str_replace('-', '/', $from)) . ') باشد');
+                return self::fail('سررسید ' . $number . ' (' . UsersImport::faDigits(str_replace('-', '/', $deadline)) . ') نمی‌تواند قبل از شروع دوره (' . UsersImport::faDigits(str_replace('-', '/', $from)) . ') باشد', 'installments[' . $i . '][deadline]');
             if ($to !== '' && strcmp($deadline, $to) > 0)
-                return self::fail('سررسید ' . $number . ' (' . UsersImport::faDigits(str_replace('-', '/', $deadline)) . ') نمی‌تواند بعد از اتمام دوره (' . UsersImport::faDigits(str_replace('-', '/', $to)) . ') باشد');
+                return self::fail('سررسید ' . $number . ' (' . UsersImport::faDigits(str_replace('-', '/', $deadline)) . ') نمی‌تواند بعد از اتمام دوره (' . UsersImport::faDigits(str_replace('-', '/', $to)) . ') باشد', 'installments[' . $i . '][deadline]');
             if ($previous !== '' && strcmp($deadline, $previous) <= 0)
-                return self::fail('سررسید اقساط باید به ترتیب و در روزهای مختلف باشد (' . $number . ')');
+                return self::fail('سررسید اقساط باید به ترتیب و در روزهای مختلف باشد (' . $number . ')', 'installments[' . $i . '][deadline]');
             $previous = $deadline;
             $plan[$i] = ['deadline' => $deadline, 'amount' => (string) (int) $amount];
             $sum += (int) $amount;
@@ -231,7 +232,7 @@ class PackageForm extends ShortCourseForm
         if ($sum !== $payable)
             return self::fail('مجموع پیش‌پرداخت و اقساط (' . UsersImport::faDigits(number_format($sum)) . ' تومان) باید دقیقاً برابر شهریه‌ی دوره ('
                 . UsersImport::faDigits(number_format($payable)) . ' تومان) باشد؛ ' . ($sum < $payable ? 'کسری ' : 'مازاد ')
-                . UsersImport::faDigits(number_format(abs($payable - $sum))) . ' تومان');
+                . UsersImport::faDigits(number_format(abs($payable - $sum))) . ' تومان', 'installments-total');
         $model->installments = $plan;
         $model->prepayment_installments = (string) (int) $prepayment;
         return true;

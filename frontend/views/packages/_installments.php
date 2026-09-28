@@ -16,6 +16,8 @@ use app\components\UsersImport;
 use yii\helpers\Html;
 use yii\helpers\Json;
 
+\frontend\assets\FormValidateAsset::register($this);
+
 $fa = function ($n) { return UsersImport::faDigits($n); };
 $money = function ($n) { return UsersImport::faDigits(number_format((float) $n)); };
 $plan = is_array($model->installments) ? array_values($model->installments) : [];
@@ -50,7 +52,11 @@ $this->registerJs(<<<JS
         box.find('.js-sum').text(money(sum));
         box.find('.js-diff').text(diff === 0 ? 'برابر با شهریه' : (diff > 0 ? 'کسری ' + money(diff) : 'مازاد ' + money(-diff)) + ' تومان');
         box.removeClass('alert-success alert-danger').addClass(diff === 0 ? 'alert-success' : 'alert-danger');
-        form.find('button[type=submit]').prop('disabled', diff !== 0 && form.find('.js-row').length > 0);
+        // مجموع نابرابر: پیام زیر فیلد پیش‌پرداخت (کسری/مازاد) و جلوگیری از ذخیره
+        var pre = form.find('[name="prepayment_installments"]')[0], active = form.find('.js-row').length > 0;
+        pre.required = active;
+        pre.setCustomValidity(active && diff !== 0 ? 'مجموع پیش‌پرداخت و اقساط باید دقیقاً برابر شهریه باشد (' + (diff > 0 ? 'کسری ' + money(diff) : 'مازاد ' + money(-diff)) + ' تومان)' : '');
+        if ($(pre).hasClass('is-invalid')) EecValidate.validateField(pre);
     }
     function renumber() {
         form.find('.js-row').each(function (i) {
@@ -74,6 +80,7 @@ $this->registerJs(<<<JS
     });
     form.find('[data-f="deadline"]').each(function () { picker(this); });
     renumber(); total();
+    EecValidate.bind(form[0], {ajax: true});
 })();
 JS
 , \yii\web\View::POS_END);
@@ -112,7 +119,7 @@ JS
             <div class="row g-3 align-items-end mb-3">
                 <div class="col-md-4">
                     <label class="form-label">مبلغ پیش‌پرداخت (تومان)</label>
-                    <input type="text" name="prepayment_installments" class="form-control" value="<?= Html::encode($prepayment) ?>" inputmode="numeric" data-input="digits" dir="ltr" maxlength="12">
+                    <input type="text" name="prepayment_installments" data-label="مبلغ پیش‌پرداخت" class="form-control" value="<?= Html::encode($prepayment) ?>" inputmode="numeric" data-input="digits" dir="ltr" maxlength="12">
                 </div>
                 <div class="col-md-8 d-flex gap-2">
                     <button type="button" class="btn btn-label-primary js-add"><i class="bx bx-plus me-1"></i>افزودن قسط</button>
@@ -129,7 +136,7 @@ JS
                     </div>
                 <?php endforeach; ?>
             </div>
-            <div class="alert mt-3" id="installments-total">
+            <div class="alert mt-3" id="installments-total" data-error-for="installments-total">
                 <div class="d-flex flex-wrap justify-content-between gap-2">
                     <span>مجموع پیش‌پرداخت و اقساط: <b class="js-sum"></b> تومان</span>
                     <span>شهریه: <b><?= $money($payable) ?></b> تومان — <b class="js-diff"></b></span>

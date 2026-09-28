@@ -159,7 +159,7 @@ class CoursesController extends Controller
         $model = new Courses();
         $model->scenario = Courses::SCENARIO_CREATE_COURSE;
         if (!ShortCourseForm::apply($model, Yii::$app->request->post('Courses'), true))
-            return $this->back('error', ShortCourseForm::$error);
+            return $this->back('error', ShortCourseForm::$error, null, ShortCourseForm::$errorField);
 
         $model->type = '1';
         $role = CourseAccess::role();
@@ -180,7 +180,7 @@ class CoursesController extends Controller
         if ($contract !== null) {
             $name = SecureUpload::save($contract, 'document', self::CONTRACT_DIR);
             if ($name === null)
-                return $this->back('error', 'فایل قرارداد: ' . SecureUpload::$lastError);
+                return $this->back('error', 'فایل قرارداد: ' . SecureUpload::$lastError, null, 'Courses[contract_file]');
             $model->contract_file = $name;
         }
 
@@ -190,7 +190,7 @@ class CoursesController extends Controller
 
         if (!$model->validate()) {
             SecureUpload::delete(self::CONTRACT_DIR, $model->contract_file);
-            return $this->back('error', $this->firstError($model));
+            return $this->back('error', $this->firstError($model), null, $this->errorField($model));
         }
         if ($model->status === CourseStatus::ACTIVE && !$this->assignLicenseCode($model)) {
             SecureUpload::delete(self::CONTRACT_DIR, $model->contract_file);
@@ -224,9 +224,9 @@ class CoursesController extends Controller
         $oldServer = (string) $model->classroom_server;
         $model->scenario = Courses::SCENARIO_EDIT_COURSE;
         if (!ShortCourseForm::apply($model, $input, false))
-            return $this->back('error', ShortCourseForm::$error);
+            return $this->back('error', ShortCourseForm::$error, null, ShortCourseForm::$errorField);
         if (!$model->validate())
-            return $this->back('error', $this->firstError($model));
+            return $this->back('error', $this->firstError($model), null, $this->errorField($model));
 
         // ویرایش دوره‌ی «نیاز به اصلاح» = ارسال مجدد با برچسب «اصلاح‌شده، در انتظار بررسی» (بند ۵.۳)
         if (in_array((string) $model->status, [CourseStatus::NEEDS_CORRECTION, CourseStatus::UNIT_CORRECTION], true))
@@ -658,9 +658,32 @@ class CoursesController extends Controller
         return 'اطلاعات وارد شده معتبر نیست';
     }
 
-    private function back($type, $message, $url = null)
+    /**
+     * پیام و بازگشت. درخواست پس‌زمینه‌ی فرم (AJAX) → JSON با نام فیلد خطا تا پیام زیر همان فیلد نمایش داده شود
+     * و اطلاعات واردشده از دست نرود.
+     */
+    private function back($type, $message, $url = null, $field = null)
     {
+        $url = $url !== null ? $url : SafeRedirect::referrer(['index']);
+        if (Yii::$app->request->isAjax && Yii::$app->request->isPost) {
+            Yii::$app->response->format = Response::FORMAT_JSON;
+            if ($type === 'error')
+                return ['ok' => false, 'message' => $message, 'field' => $field];
+            Yii::$app->session->setFlash(self::FLASH, ['type' => $type, 'message' => $message]);
+            return ['ok' => true, 'redirect' => Url::to($url)];
+        }
         Yii::$app->session->setFlash(self::FLASH, ['type' => $type, 'message' => $message]);
-        return $this->redirect($url !== null ? $url : SafeRedirect::referrer(['index']));
+        return $this->redirect($url);
+    }
+
+    /** نام فیلد فرم برای اولین خطای مدل (title[main_fa] → Courses[title][main_fa]) */
+    private function errorField(Courses $model)
+    {
+        foreach (array_keys($model->getFirstErrors()) as $attribute) {
+            $map = ['student_capacity' => 'student_capacity[type]', 'title' => 'title[main_fa]'];
+            $attribute = isset($map[$attribute]) ? $map[$attribute] : $attribute;
+            return 'Courses[' . preg_replace('/^([^\[]+)/', '$1]', $attribute, 1);
+        }
+        return null;
     }
 }

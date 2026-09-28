@@ -326,8 +326,6 @@ class PackagesController extends Controller
         $discounts = Discounts::find()->where(['course_id' => (string) $model->_id])->all();
         $searchModel = new \app\models\CourseMembersSearch();
         $dataProvider = $searchModel->search(Yii::$app->request->queryParams, (string) $model->_id);
-        $courseFinancial = CoursesFinancial::find()->where(['course_id' => (string) $model->_id])->andWhere(['payment_info.status' => '2'])->orderBy(['_id'=>SORT_DESC])->all();
-        $addRequests = OrganizationPayments::find()->where(['product_id' => (string) $model->_id])->all();
         $allowEdit = \app\components\CourseAccess::canEdit($model);
         return $this->render('edit-package', [
             'colleges' => ArrayHelper::map($colleges, function ($m) {
@@ -343,8 +341,6 @@ class PackagesController extends Controller
             'dataProvider' => $dataProvider,
             'discounts' => $discounts,
             'allowEdit' => $allowEdit,
-            'courseFinancial' => $courseFinancial,
-            'addRequests' => $addRequests,
             'memberStats' => \app\models\CourseMembersSearch::stats((string) $model->_id),
             'servers' => \app\models\ClassroomServers::activeOptions(),
         ]);
@@ -570,7 +566,7 @@ class PackagesController extends Controller
         $model = new Courses();
         $model->scenario = Courses::SCENARIO_CREATE_PACKAGE;
         if (!\app\components\PackageForm::apply($model, Yii::$app->request->post('Courses'), true))
-            return $this->packageBack('error', \app\components\PackageForm::$error, ['create-package']);
+            return $this->formResult('error', \app\components\PackageForm::$error, ['create-package'], \app\components\PackageForm::$errorField);
 
         $role = \app\components\CourseAccess::role();
         $unit = (string) $model->college;
@@ -592,7 +588,7 @@ class PackagesController extends Controller
         if ($image !== null) {
             $name = \app\components\SecureUpload::save($image, 'image', '@frontend/web/package_images');
             if ($name === null)
-                return $this->packageBack('error', 'تصویر دوره: ' . \app\components\SecureUpload::$lastError, ['create-package']);
+                return $this->formResult('error', 'تصویر دوره: ' . \app\components\SecureUpload::$lastError, ['create-package'], 'Courses[preview_image]');
             $model->preview_image = $name;
         } else {
             $model->preview_image = 'default_course.png';
@@ -601,17 +597,17 @@ class PackagesController extends Controller
         if ($contract !== null) {
             $name = \app\components\SecureUpload::save($contract, 'document', '@frontend/web/contract_files');
             if ($name === null)
-                return $this->packageBack('error', 'فایل قرارداد: ' . \app\components\SecureUpload::$lastError, ['create-package']);
+                return $this->formResult('error', 'فایل قرارداد: ' . \app\components\SecureUpload::$lastError, ['create-package'], 'Courses[contract_file]');
             $model->contract_file = $name;
         }
         if (!$model->validate()) {
             \app\components\SecureUpload::delete('@frontend/web/contract_files', $model->contract_file);
-            return $this->packageBack('error', current($model->getFirstErrors()) ?: 'اطلاعات وارد شده معتبر نیست', ['create-package']);
+            return $this->formResult('error', current($model->getFirstErrors()) ?: 'اطلاعات وارد شده معتبر نیست', ['create-package'], self::errorField($model));
         }
         if ($model->status === \app\components\CourseStatus::ACTIVE && !\app\components\CourseOptions::assignLicenseCode($model))
-            return $this->packageBack('error', 'تولید کد مجوز ممکن نشد (کد واحد یا شمارنده‌ی کد مجوز تعریف نشده است)', ['create-package']);
+            return $this->formResult('error', 'تولید کد مجوز ممکن نشد (کد واحد یا شمارنده‌ی کد مجوز تعریف نشده است)', ['create-package']);
         if (!$model->save(false))
-            return $this->packageBack('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید', ['create-package']);
+            return $this->formResult('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید', ['create-package']);
 
         $message = 'دوره «' . $model->title['main_fa'] . '» ثبت شد';
         if ($model->status === \app\components\CourseStatus::ACTIVE && \app\components\classroom\ClassroomPlatforms::hasOnlineClass($model)) {
@@ -619,9 +615,9 @@ class PackagesController extends Controller
             $model->adobe_status = $result === true ? '1' : '0';
             $model->save(false, ['adobe_status']);
             if ($result !== true)
-                return $this->packageBack('warning', $message . '؛ اما ساخت کلاس آنلاین ناموفق بود', ['edit-package', '_id' => (string) $model->_id]);
+                return $this->formResult('warning', $message . '؛ اما ساخت کلاس آنلاین ناموفق بود', ['edit-package', '_id' => (string) $model->_id]);
         }
-        return $this->packageBack('success', $message, ['edit-package', '_id' => (string) $model->_id]);
+        return $this->formResult('success', $message, ['edit-package', '_id' => (string) $model->_id]);
     }
 
     /**
@@ -633,18 +629,18 @@ class PackagesController extends Controller
         $id = is_array($input) && isset($input['_id']) && is_string($input['_id']) && preg_match('/^[a-f0-9]{24}$/i', $input['_id']) ? $input['_id'] : null;
         $model = $id === null ? null : Courses::find()->where(['_id' => $id, 'type' => '2'])->one();
         if ($model === null || !\app\components\CourseAccess::canEdit($model))
-            return $this->packageBack('error', 'دوره یافت نشد یا امکان ویرایش آن را ندارید (دوره‌ی تأییدشده را فقط مدیر سیستم ویرایش می‌کند)', ['index']);
+            return $this->formResult('error', 'دوره یافت نشد یا امکان ویرایش آن را ندارید (دوره‌ی تأییدشده را فقط مدیر سیستم ویرایش می‌کند)', ['index']);
         $back = ['edit-package', '_id' => (string) $model->_id];
         $oldServer = (string) $model->classroom_server;
         $model->scenario = Courses::SCENARIO_EDIT_PACKAGE;
         if (!\app\components\PackageForm::apply($model, $input, false))
-            return $this->packageBack('error', \app\components\PackageForm::$error, $back);
+            return $this->formResult('error', \app\components\PackageForm::$error, $back, \app\components\PackageForm::$errorField);
 
         $image = UploadedFile::getInstance($model, 'preview_image');
         if ($image !== null) {
             $name = \app\components\SecureUpload::save($image, 'image', '@frontend/web/package_images');
             if ($name === null)
-                return $this->packageBack('error', 'تصویر دوره: ' . \app\components\SecureUpload::$lastError, $back);
+                return $this->formResult('error', 'تصویر دوره: ' . \app\components\SecureUpload::$lastError, $back, 'Courses[preview_image]');
             $old = (string) $model->getOldAttribute('preview_image');
             if ($old !== '' && $old !== 'default_course.png')
                 \app\components\SecureUpload::delete('@frontend/web/package_images', $old);
@@ -654,16 +650,16 @@ class PackagesController extends Controller
         if ($contract !== null) {
             $name = \app\components\SecureUpload::save($contract, 'document', '@frontend/web/contract_files');
             if ($name === null)
-                return $this->packageBack('error', 'فایل قرارداد: ' . \app\components\SecureUpload::$lastError, $back);
+                return $this->formResult('error', 'فایل قرارداد: ' . \app\components\SecureUpload::$lastError, $back, 'Courses[contract_file]');
             $model->contract_file = $name;
         }
         if (!$model->validate())
-            return $this->packageBack('error', current($model->getFirstErrors()) ?: 'اطلاعات وارد شده معتبر نیست', $back);
+            return $this->formResult('error', current($model->getFirstErrors()) ?: 'اطلاعات وارد شده معتبر نیست', $back, self::errorField($model));
         // ویرایش دوره‌ی «نیاز به اصلاح» = ارسال مجدد (دوره‌ی کارگزار پس از برگشت مدیر، دوباره از واحد می‌گذرد)
         if (in_array((string) $model->status, [\app\components\CourseStatus::NEEDS_CORRECTION, \app\components\CourseStatus::UNIT_CORRECTION], true))
             \app\components\CourseStatus::submit($model, \app\components\CourseAccess::role() === 'broker');
         if (!$model->save(false))
-            return $this->packageBack('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید', $back);
+            return $this->formResult('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید', $back);
 
         $message = 'دوره «' . $model->title['main_fa'] . '» ویرایش شد';
         if ($oldServer !== (string) $model->classroom_server && \app\components\classroom\ClassroomPlatforms::hasOnlineClass($model)
@@ -672,10 +668,10 @@ class PackagesController extends Controller
             if ($result !== true) {
                 $model->adobe_status = '0';
                 $model->save(false, ['adobe_status']);
-                return $this->packageBack('warning', $message . '؛ اما ساخت کلاس آنلاین روی سرور جدید ناموفق بود', $back);
+                return $this->formResult('warning', $message . '؛ اما ساخت کلاس آنلاین روی سرور جدید ناموفق بود', $back);
             }
         }
-        return $this->packageBack('success', $message, $back);
+        return $this->formResult('success', $message, $back);
     }
 
     /**
@@ -685,15 +681,42 @@ class PackagesController extends Controller
     {
         $model = is_string($_id) && preg_match('/^[a-f0-9]{24}$/i', $_id) ? Courses::find()->where(['_id' => $_id, 'type' => '2'])->one() : null;
         if ($model === null || !\app\components\CourseAccess::canEdit($model))
-            return $this->packageBack('error', 'دوره یافت نشد یا امکان ویرایش آن را ندارید', ['index']);
+            return $this->formResult('error', 'دوره یافت نشد یا امکان ویرایش آن را ندارید', ['index']);
         $back = ['edit-package', '_id' => (string) $model->_id, 'tab' => 'tab-id3'];
         if (\app\components\PackageForm::planInUse($model) && !\app\components\CourseAccess::isAdmin())
-            return $this->packageBack('error', 'دانشپذیرانی با این شرایط اقساطی ثبت‌نام کرده‌اند؛ تغییر آن فقط توسط مدیر سیستم ممکن است', $back);
+            return $this->formResult('error', 'دانشپذیرانی با این شرایط اقساطی ثبت‌نام کرده‌اند؛ تغییر آن فقط توسط مدیر سیستم ممکن است', $back);
         if (!\app\components\PackageForm::applyInstallments($model, Yii::$app->request->post('prepayment_installments'), Yii::$app->request->post('installments')))
-            return $this->packageBack('error', \app\components\PackageForm::$error, $back);
+            return $this->formResult('error', \app\components\PackageForm::$error, $back, \app\components\PackageForm::$errorField);
         if (!$model->save(false, ['installments', 'prepayment_installments']))
-            return $this->packageBack('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید', $back);
-        return $this->packageBack('success', empty($model->installments) ? 'شرایط اقساطی حذف شد؛ دوره فقط نقدی است' : 'شرایط اقساطی ذخیره شد', $back);
+            return $this->formResult('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید', $back);
+        return $this->formResult('success', empty($model->installments) ? 'شرایط اقساطی حذف شد؛ دوره فقط نقدی است' : 'شرایط اقساطی ذخیره شد', $back);
+    }
+
+    /**
+     * نتیجه‌ی ارسال فرم: درخواست پس‌زمینه (AJAX) → JSON با نام فیلد خطا برای نمایش زیر همان فیلد؛
+     * درخواست عادی → پیام و انتقال.
+     */
+    private function formResult($type, $message, $url, $field = null)
+    {
+        if (Yii::$app->request->isAjax) {
+            Yii::$app->response->format = Response::FORMAT_JSON;
+            if ($type === 'error')
+                return ['ok' => false, 'message' => $message, 'field' => $field];
+            Yii::$app->session->setFlash(\frontend\controllers\CourseMembersController::FLASH, ['type' => $type, 'message' => $message]);
+            return ['ok' => true, 'redirect' => Url::to($url)];
+        }
+        return $this->packageBack($type, $message, $url);
+    }
+
+    /** نام فیلد فرم برای اولین خطای مدل (title[main_fa] → Courses[title][main_fa]) */
+    private static function errorField(Courses $model)
+    {
+        foreach (array_keys($model->getFirstErrors()) as $attribute) {
+            $map = ['student_capacity' => 'student_capacity[type]', 'date' => 'date[from]', 'title' => 'title[main_fa]'];
+            $attribute = isset($map[$attribute]) ? $map[$attribute] : $attribute;
+            return 'Courses[' . preg_replace('/^([^\[]+)/', '$1]', $attribute, 1);
+        }
+        return null;
     }
 
     private function packageBack($type, $message, $url)

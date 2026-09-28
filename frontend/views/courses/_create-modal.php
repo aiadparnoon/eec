@@ -21,6 +21,7 @@ use yii\helpers\Url;
 $optionsUrl = Json::htmlEncode(Url::to(['unit-options']));
 DateRangeAsset::register($this);
 SelectSearchAsset::register($this);
+\frontend\assets\FormValidateAsset::register($this);
 $minHours = ShortCourseForm::MIN_HOURS;
 $maxHours = ShortCourseForm::MAX_HOURS;
 $this->registerJs(<<<JS
@@ -100,6 +101,7 @@ $this->registerJs(<<<JS
     }
     // همه‌ی فیلدهای انتخابی با جست‌وجو (مثلاً فهرست چندصدتایی دروس)
     EecSelect.init(document.getElementById('new-course'));
+    EecValidate.bind(document.getElementById('course-form'), {ajax: true});
     $('#new-course').on('shown.bs.modal', function () {
         var unit = $('#new-unit');
         if (unit.is('input')) { if (!unit.data('loaded')) { unit.data('loaded', 1).trigger('change'); } return; }
@@ -199,7 +201,7 @@ $serverOptions = $servers + [ClassroomServers::NONE => 'هیچ‌کدام (بر�
                     </div>
                     <div class="col-md-4" id="new-server-wrap" style="display:none">
                         <label class="form-label" for="new-server">کلاس روی کدام سرور برگزار شود؟ *</label>
-                        <?= Html::dropDownList('Courses[classroom_server]', null, $serverOptions, ['id' => 'new-server', 'class' => 'form-select', 'prompt' => 'انتخاب سرور']) ?>
+                        <?= Html::dropDownList('Courses[classroom_server]', null, $serverOptions, ['id' => 'new-server', 'class' => 'form-select', 'prompt' => 'انتخاب سرور', 'required' => true]) ?>
                     </div>
                     <div class="col-md-4" id="new-archive-wrap" style="display:none">
                         <label class="form-label" for="new-archive">مخفی کردن آرشیو *</label>

@@ -12,6 +12,7 @@ use app\components\PackageForm;
 use app\components\ShortCourseForm;
 use app\models\ClassroomServers;
 use frontend\assets\DateRangeAsset;
+use frontend\assets\FormValidateAsset;
 use frontend\assets\InputGuardAsset;
 use frontend\assets\SelectSearchAsset;
 use frontend\controllers\CourseMembersController;
@@ -22,6 +23,7 @@ use yii\helpers\Url;
 
 $this->title = 'ثبت دوره‌ی میان‌مدت';
 DateRangeAsset::register($this);
+FormValidateAsset::register($this);
 SelectSearchAsset::register($this);
 InputGuardAsset::register($this);
 
@@ -96,7 +98,7 @@ $this->registerJs(<<<JS
                 '<div class="mb-2"><label class="form-label small">مدرس *</label><select class="form-select js-teacher" required>' + teachers + '</select></div>' +
                 '<div class="row g-2"><div class="col-6"><label class="form-label small">تاریخ شروع *</label><input type="text" class="form-control js-from" data-f="from" required autocomplete="off"></div>' +
                 '<div class="col-6"><label class="form-label small">تاریخ اتمام *</label><input type="text" class="form-control js-to" data-f="to" required autocomplete="off"></div>' +
-                '<div class="col-6"><label class="form-label small">ساعت شروع *</label><input type="text" class="form-control js-time" required placeholder="18:30" pattern="([01]?[0-9]|2[0-3]):[0-5][0-9]" dir="ltr" maxlength="5"></div>' +
+                '<div class="col-6"><label class="form-label small">ساعت شروع *</label><input type="text" class="form-control js-time" required data-error-pattern="ساعت را به شکل ۱۸:۳۰ وارد کنید" placeholder="18:30" pattern="([01]?[0-9]|2[0-3]):[0-5][0-9]" dir="ltr" maxlength="5"></div>' +
                 '<div class="col-6"><label class="form-label small">مدت (ساعت) *</label><input type="text" class="form-control js-hours" required inputmode="numeric" data-input="digits" dir="ltr" maxlength="3"></div>' +
                 '<div class="col-12"><label class="form-label small">مخفی کردن آرشیو</label><select class="form-select js-archive"><option value="0">خیر</option><option value="1">بله</option></select></div></div>' +
                 '</div></div>');
@@ -130,8 +132,8 @@ $this->registerJs(<<<JS
     });
     form.on('input change', '#pkg-duration', function () {
         var v = parseInt(this.value, 10), msg = isNaN(v) ? 'مدت دوره را وارد کنید' : (v < cfg.minHours ? 'دوره‌ی میان‌مدت حداقل ' + fa(cfg.minHours) + ' ساعت است؛ دوره‌ی کوتاه‌تر را از بخش کوتاه‌مدت ثبت کنید' : '');
-        this.setCustomValidity(msg);
-        $('#pkg-duration-help').text(msg || ('حداقل ' + fa(cfg.minHours) + ' ساعت')).toggleClass('text-danger', !!msg);
+        this.setCustomValidity(msg === 'مدت دوره را وارد کنید' ? '' : msg);
+        $('#pkg-duration-help').toggle(!msg);
     });
 
     // --- تاریخ دوره: اتمام حداقل یک روز بعد؛ تاریخ دروس و اقساط داخل بازه‌ی دوره
@@ -169,7 +171,8 @@ $this->registerJs(<<<JS
         box.find('.js-diff').text(diff === 0 ? 'برابر با شهریه' : (diff > 0 ? 'کسری ' + money(diff) : 'مازاد ' + money(-diff)) + ' تومان');
         box.removeClass('alert-success alert-danger').addClass(diff === 0 ? 'alert-success' : 'alert-danger');
         var bad = active && diff !== 0;
-        $('#pkg-prepayment')[0].setCustomValidity(bad ? 'مجموع پیش‌پرداخت و اقساط باید دقیقاً برابر شهریه باشد' : '');
+        $('#pkg-prepayment')[0].setCustomValidity(bad ? 'مجموع پیش‌پرداخت و اقساط باید دقیقاً برابر شهریه باشد (' + (diff > 0 ? 'کسری ' + money(diff) : 'مازاد ' + money(-diff)) + ' تومان)' : '');
+        if ($('#pkg-prepayment').hasClass('is-invalid')) EecValidate.validateField($('#pkg-prepayment')[0]);
     }
     form.on('click', '.js-add-installment', function () {
         if (form.find('.js-installment').length >= cfg.maxInstallments) return;
@@ -190,6 +193,8 @@ $this->registerJs(<<<JS
     form.on('input change', '#pkg-price, #pkg-discount, #pkg-prepayment, .js-amount', total);
 
     EecSelect.init(form[0]);
+    // پیام خطای هر فیلد زیر همان فیلد؛ خطای سرور هم بدون از دست رفتن اطلاعات فرم
+    EecValidate.bind(form[0], {ajax: true});
     var unit = $('#pkg-unit');
     if (unit.is('input') || (unit.find('option').length === 2 && !unit.val())) {
         if (!unit.is('input')) unit.val(unit.find('option:last').val());
@@ -243,7 +248,7 @@ JS
                 </div>
                 <div class="col-md-3" id="pkg-capacity-number-wrap" style="display:none">
                     <label class="form-label" for="pkg-capacity-number">ظرفیت (نفر) *</label>
-                    <input type="text" id="pkg-capacity-number" name="Courses[student_capacity][number]" class="form-control" inputmode="numeric" maxlength="5" data-input="digits" dir="ltr">
+                    <input type="text" id="pkg-capacity-number" name="Courses[student_capacity][number]" data-label="ظرفیت" class="form-control" inputmode="numeric" maxlength="5" data-input="digits" dir="ltr">
                 </div>
                 <div class="col-md-6" id="pkg-contract-file-wrap" style="display:none">
                     <label class="form-label" for="pkg-contract-file">فایل قرارداد *</label>
@@ -297,7 +302,7 @@ JS
         <h5 class="card-header">دروس دوره</h5>
         <div class="card-body">
             <label class="form-label" for="pkg-lessons">دروس *</label>
-            <select id="pkg-lessons" class="form-select" multiple data-placeholder="جست‌وجو و انتخاب دروس" disabled></select>
+            <select id="pkg-lessons" class="form-select" multiple data-placeholder="جست‌وجو و انتخاب دروس" required data-error-required="حداقل یک درس برای دوره انتخاب کنید" data-error-for="lessons-select" disabled></select>
             <small class="text-muted d-block mb-3">برای هر درس مدرس، تاریخ‌ها (داخل بازه‌ی دوره)، ساعت و مدت را وارد کنید.</small>
             <div class="text-muted" id="pkg-lessons-empty">هنوز درسی انتخاب نشده است.</div>
             <div class="row g-3" id="pkg-lesson-cards"></div>
@@ -313,7 +318,7 @@ JS
                 <div class="col-md-4"><button type="button" class="btn btn-label-primary js-add-installment"><i class="bx bx-plus me-1"></i>افزودن قسط</button></div>
             </div>
             <div id="pkg-installments"></div>
-            <div class="alert mt-3" id="pkg-installments-total" style="display:none">
+            <div class="alert mt-3" id="pkg-installments-total" data-error-for="installments-total" style="display:none">
                 <div class="d-flex flex-wrap justify-content-between gap-2">
                     <span>مجموع پیش‌پرداخت و اقساط: <b class="js-sum"></b> تومان</span>
                     <span>شهریه: <b class="js-payable"></b> تومان — <b class="js-diff"></b></span>
@@ -333,7 +338,7 @@ JS
     <div class="d-flex flex-wrap gap-2 justify-content-end mb-5">
         <a href="<?= Url::to(['index']) ?>" class="btn btn-label-secondary">انصراف</a>
         <?php if (!$isAdmin): ?>
-            <button type="submit" name="draft" value="1" class="btn btn-label-primary" formnovalidate>ذخیره‌ی پیش‌نویس</button>
+            <button type="submit" name="draft" value="1" class="btn btn-label-primary">ذخیره‌ی پیش‌نویس</button>
         <?php endif; ?>
         <button type="submit" class="btn btn-primary" <?= empty($units) ? 'disabled' : '' ?>><?= $isAdmin ? 'ثبت و فعال‌سازی دوره' : 'ثبت و ارسال برای بررسی' ?></button>
     </div>
