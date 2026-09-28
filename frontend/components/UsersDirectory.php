@@ -210,13 +210,14 @@ class UsersDirectory
 
     public static function courseType($type)
     {
-        $types = ['1' => 'دوره تک درس', '2' => 'دوره جامع', '3' => 'دوره یک‌ساله'];
+        // بند ۱.۱ صورتجلسه: فقط دو دسته — تک‌درس = کوتاه‌مدت؛ جامع و یک‌ساله = میان‌مدت
+        $types = ['1' => 'دوره کوتاه‌مدت', '2' => 'دوره میان‌مدت', '3' => 'دوره میان‌مدت'];
         return isset($types[(string) $type]) ? $types[(string) $type] : 'دوره';
     }
 
     public static function contentType($type)
     {
-        $types = ['1' => 'آنلاین', '2' => 'حضوری/آفلاین', '3' => 'محتوایی'];
+        $types = ['1' => 'غیرحضوری', '2' => 'نیمه‌حضوری', '3' => 'محتوامحور', '4' => 'حضوری'];
         return isset($types[(string) $type]) ? $types[(string) $type] : '-';
     }
 

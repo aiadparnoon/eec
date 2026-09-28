@@ -83,6 +83,14 @@ JS;
             "closeButton": "true"
         });
 JS;
+    else if (Yii::$app->session->get('status') == '8')
+        $script = <<< JS
+    toastr.success("وضعیت صدور گواهی دیجیتال تغییر یافت", {
+            positionClass: "toast-top-center",
+            containerId: "toast-top-center",
+            "closeButton": "true"
+        });
+JS;
 
     $this->registerJs($script);
     Yii::$app->session->remove('status');

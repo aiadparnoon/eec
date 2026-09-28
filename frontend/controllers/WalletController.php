@@ -130,7 +130,7 @@ class WalletController extends Controller
                 "mobile": "",
                 "amount": "'. $amount.'",
                 "id": "'. $collegeDetail->financial_info['id'].'",
-                "api_key": "63eb5e997d30590001bb0107",
+                "api_key": "'. \app\components\PaymentConfig::apiKey() .'",
                 "callback": "https://eec1.ut.ac.ir/wallet/increase_wallet_callback"
 }',
                         CURLOPT_HTTPHEADER => array(

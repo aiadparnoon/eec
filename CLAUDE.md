@@ -7,7 +7,7 @@ UI theme: Sneat-style Bootstrap 5 RTL (Persian), files in `frontend/web/assets/{
 - Redesign goes module by module. Specs live in `docs/specs/`. Read the relevant spec before coding.
 - One branch + one PR per module. Never commit to `main` directly.
 - UI text is Persian. Code comments may be Persian or English, match the surrounding file.
-- Secrets live only in `*-local.php` (gitignored). Never hardcode credentials. Adobe Connect creds: aliases `@adobe_user`, `@adobe_password`.
+- Secrets live only in `*-local.php` (gitignored). Never hardcode credentials. Adobe Connect creds: aliases `@adobe_user`, `@adobe_password`; payment gateway key: `@payment_api_key` (read via `PaymentConfig::apiKey()`).
 - Run `php init` (Development) to generate local config files in a fresh checkout; MongoDB DSN goes in `common/config/main-local.php`.
 
 ## Domain basics

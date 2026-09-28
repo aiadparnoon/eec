@@ -2,1201 +2,757 @@
 
 namespace frontend\controllers;
 
-use DateInterval;
-use DateTime;
 use Yii;
-use app\models\Courses;
-use app\models\CoursesSearch;
-use app\models\CoursesMembers;
-use app\models\Colleges;
 use app\models\Brokers;
-use app\models\Teachers;
-use app\models\Lessons;
+use app\models\ClassroomServers;
+use app\models\Colleges;
+use app\models\Courses;
 use app\models\CoursesContents;
-use app\models\CoursesContentsSearch;
-use app\models\Generals;
-use app\models\Users;
-use app\models\Scores;
+use app\models\CourseMembersSearch;
 use app\models\Discounts;
-use app\models\CoursesFinancial;
-use common\models\Admin;
+use app\models\Generals;
+use app\models\Lessons;
+use app\models\Scores;
+use app\models\ShortCoursesSearch;
+use app\models\Teachers;
+use app\models\Users;
+use app\components\CourseAccess;
+use app\components\CourseMembersImport;
+use app\components\CourseStatus;
+use app\components\SafeRedirect;
+use app\components\SecureUpload;
+use app\components\ShortCourseForm;
+use app\components\StudentAccess;
+use app\components\StudentProfile;
+use app\components\UsersDirectory;
+use app\components\XlsxWriter;
+use app\components\classroom\ClassroomPlatforms;
 use yii\filters\AccessControl;
+use yii\filters\VerbFilter;
 use yii\helpers\ArrayHelper;
 use yii\helpers\Html;
 use yii\helpers\Url;
 use yii\web\Controller;
 use yii\web\NotFoundHttpException;
-use yii\filters\VerbFilter;
+use yii\web\Response;
 use yii\web\UploadedFile;
 use yii\widgets\ActiveForm;
-use yii2tech\spreadsheet\Spreadsheet;
 
 /**
- * CoursesController implements the CRUD actions for Courses model.
+ * دوره‌های کوتاه‌مدت (courses.type = '1').
+ *
+ * دسترسی هر اکشن با CourseAccess کنترل می‌شود (نه فقط در ویو):
+ *  - استاد فقط فهرست دوره‌های خودش را می‌بیند؛ ثبت/ویرایش/کپی/حذف ندارد.
+ *  - کارشناس واحد و کارگزار فقط دوره‌های محدوده‌ی خود؛ پس از تأیید فقط مدیر ویرایش می‌کند.
  */
 class CoursesController extends Controller
 {
-    /**
-     * {@inheritdoc}
-     */
+    const FLASH = 'courses';
+    const CONTRACT_DIR = '@frontend/web/contract_files';
+    /** واحدی که دوره‌هایش بدون بررسی تأیید می‌شوند (قاعده‌ی موجود پروژه) */
+    const AUTO_APPROVE_UNIT = '663b1d28c9c6ce2e65073e22';
+    /** واحدی که دوره‌هایش مثل کارگزار ابتدا در واحد بررسی می‌شوند (قاعده‌ی موجود پروژه) */
+    const UNIT_REVIEW_UNIT = '65afa2ea5136ec5b5b0c4064';
+
     public function behaviors()
     {
+        $staff = function () {
+            $identity = Yii::$app->user->identity;
+            return $identity->role == 'user'
+                || (is_array($identity->access) && in_array(Yii::$app->controller->id, $identity->access, true));
+        };
         return [
             'access' => [
                 'class' => AccessControl::className(),
-
                 'rules' => [
+                    ['allow' => false, 'roles' => ['?']],
                     [
-                        'allow' => false,
-                        'roles' => ['?'],
-                    ],
-                    [
-                        'actions' => ['index','new', 'report','check-username', 'members_report', 'edit', 'brokers', 'brokers1', 'broker_contracts', 'capacity', 'course_date', 'my_brokers', 'edit-course','show_course_users','delete-course','delete_course','copy-course'],
+                        // استاد فقط فهرست
+                        'actions' => ['index'],
                         'allow' => true,
                         'roles' => ['@'],
-                        'matchCallback' => function ($rule, $action) {
-                            if ((array_search(Yii::$app->controller->id, Yii::$app->user->identity->access) !== false || Yii::$app->user->identity->role == 'user') || Yii::$app->user->identity->role == 'teacher')
-                                return true;
-                            else
-                                return false;
-                        }
+                        'matchCallback' => function () use ($staff) {
+                            return $staff() || Yii::$app->user->identity->role == 'teacher';
+                        },
+                    ],
+                    [
+                        'actions' => ['new', 'edit', 'edit-course', 'copy-course', 'report', 'members_report', 'unit-options',
+                            'brokers', 'brokers1', 'broker_contracts', 'capacity', 'course_date', 'check-username',
+                            'show_course_users', 'delete_course', 'toggle-site', 'register-online', 'member-finance',
+                            'members-template', 'members-check', 'members-import'],
+                        'allow' => true,
+                        'roles' => ['@'],
+                        'matchCallback' => function () use ($staff) {
+                            return $staff() && Yii::$app->user->identity->role != 'teacher';
+                        },
                     ],
                 ],
-                'denyCallback' => function ($rule, $action) {
+                'denyCallback' => function () {
                     Yii::$app->getResponse()->redirect(['access-denied']);
-                }
+                },
             ],
             'verbs' => [
                 'class' => VerbFilter::className(),
                 'actions' => [
-                    'logout' => ['post'],
+                    'new' => ['post'],
+                    'edit' => ['post'],
+                    'copy-course' => ['post'],
+                    'delete_course' => ['post'],
+                    'show_course_users' => ['post'],
+                    'check-username' => ['post'],
+                    'toggle-site' => ['post'],
+                    'register-online' => ['post'],
+                    'member-finance' => ['post'],
+                    'members-check' => ['post'],
+                    'members-import' => ['post'],
                 ],
             ],
         ];
     }
 
-    /**
-     * Lists all Courses models.
-     * @return mixed
-     */
+    // ================================================================== فهرست
+
     public function actionIndex()
     {
-        $searchModel = new CoursesSearch();
-        $dataProvider = $searchModel->search(Yii::$app->request->queryParams, '1');
-        if (Yii::$app->user->identity->role == 'user' || Yii::$app->user->identity->role == 'cnt')
-        {
-            $colleges = Colleges::find()->all();
-            $brokers = Brokers::find()->orderBy(['_id'=>SORT_DESC])->all();
-            $brokers = ArrayHelper::map($brokers, function ($model){
-                return (string) $model->_id;
-            }, function ($model){
-                return $model->connector_info['first_name'].' '.$model->connector_info['last_name'];
-            });
+        $searchModel = new ShortCoursesSearch();
+        $dataProvider = $searchModel->search(Yii::$app->request->queryParams);
+        $courses = $dataProvider->getModels();
+
+        // داده‌های کمکی هر ردیف با کوئری‌های دسته‌ای
+        $teacherIds = [];
+        $brokerIds = [];
+        $registrants = [];
+        foreach ($courses as $course) {
+            if (isset($course->lessons[0]['teachers']) && is_string($course->lessons[0]['teachers']))
+                $teacherIds[] = $course->lessons[0]['teachers'];
+            if (is_array($course->broker) && isset($course->broker['_id']) && is_string($course->broker['_id']))
+                $brokerIds[] = $course->broker['_id'];
+            $registrants[] = $course->registrant;
         }
-        else
-        {
-            $colleges = Colleges::find()->where(['_id' => Yii::$app->user->identity->college])->all();
-            $brokers = Brokers::find()->where(['college' => Yii::$app->user->identity->college])->orderBy(['_id'=>SORT_DESC])->all();
-            $brokers = ArrayHelper::map($brokers, function ($model){
-                return (string) $model->_id;
-            }, function ($model){
-                return $model->connector_info['first_name'].' '.$model->connector_info['last_name'];
-            });
-        }
-        $dataProvider->pagination->pageSize = 50;
+
         return $this->render('index', [
             'searchModel' => $searchModel,
             'dataProvider' => $dataProvider,
-            'colleges' => ArrayHelper::map($colleges, function ($model) {
-                return (string) $model->_id;
-            }, 'title'),
-            'myCollege' => $colleges,
-            'brokers' => $brokers,
-            'capacityType' => $this->resolveCreateCourseCapacityType()
+            'courses' => $courses,
+            'teachers' => $this->namesById(Teachers::class, $teacherIds),
+            'brokerNames' => $this->brokerNames($brokerIds),
+            'registrants' => UsersDirectory::registrants($registrants),
+            'stats' => ShortCoursesSearch::stats(),
+            'units' => $this->selectableUnits(),
+            'createUnits' => $this->creatableUnits(),
+            'servers' => ClassroomServers::activeOptions(),
+            'brokers' => $this->selectableBrokers(),
+            'filterTeachers' => $this->selectableTeachers(),
+            'capacityTypes' => $this->capacityTypes(),
+            'canCreate' => in_array(CourseAccess::role(), ['user', 'cnt', 'emp', 'broker'], true),
         ]);
     }
 
     /**
-     * گزینه‌های "نوع ظرفیت" برای Modal «ثبت دوره تک درس» (دوره‌های کوتاه‌مدت) -
-     * دقیقاً همون منطق role/financial_info-based
-     * PackagesController::resolveCreatePackageOptions() (دوره‌های میان‌مدت) اینجا
-     * هم پیاده شده (طبق درخواست صریح ۲۰۲۶-۰۸-۲۸: «فیلد نوع ظرفیت مثل دوره‌های
-     * میان‌مدت ۲ تا گزینه داشته باشه»). «نامحدود» دیگر برای دوره‌های جدید
-     * قابل‌انتخاب نیست - رکوردهای قدیمی که از قبل این مقدار رو دارن دست
-     * نمی‌خوره (نگاه کنید Courses::validateCapacityTypeNotDisabled()).
-     *
-     * توجه: بخش broker این متد عیناً همون کد resolveCreatePackageOptions() رو
-     * تکرار می‌کنه - شامل همون $flag/$capacityFlag که در شاخه‌ی broker با هم
-     * فرق دارن؛ این عیناً رفتار فعلی دوره‌های میان‌مدت هست و برای حفظ «قوانین
-     * دقیقاً یکسان با میان‌مدت» تغییر داده نشده (تغییرش باعث می‌شد رفتار این
-     * دو نوع دوره از هم متفاوت بشه).
-     *
-     * @return array|null
+     * کارگزاران، اساتید و دروس یک واحد برای فرم ثبت دوره (JSON؛ رشته‌ها در مرورگر encode می‌شوند).
      */
-    private function resolveCreateCourseCapacityType()
+    public function actionUnitOptions($id)
     {
-        $capacityType = null;
-        if (Yii::$app->user->identity->role == 'user' || Yii::$app->user->identity->role == 'cnt')
-        {
-            $capacityType = array(
-                '2' => 'محدود',
-                '3' => 'سازمانی'
-            );
+        Yii::$app->response->format = Response::FORMAT_JSON;
+        if (!CourseAccess::canUseUnit($id))
+            return ['brokers' => [], 'teachers' => [], 'lessons' => []];
+        $brokers = [];
+        $brokerQuery = Brokers::find()->where(['college' => $id, 'status' => '1']);
+        if (CourseAccess::role() === 'broker') {
+            $own = CourseAccess::broker();
+            $brokerQuery->andWhere(['_id' => $own === null ? null : $own->_id]);
         }
-        if (Yii::$app->user->identity->role == 'emp' || Yii::$app->user->identity->role == 'broker')
-        {
-            $capacityFlag = 0;
-            $collegeDetail = Colleges::findOne(Yii::$app->user->identity->college);
-            if ($collegeDetail != null)
-            {
-                if (Yii::$app->user->identity->role == 'emp')
-                {
-                    if ($collegeDetail->financial_info == null)
-                        $capacityFlag = 1;
-                    else if ($collegeDetail->financial_info['id'] == '')
-                        $capacityFlag = 1;
-                }
-                else if (Yii::$app->user->identity->role == 'broker')
-                {
-                    if ($collegeDetail->financial_info == null)
-                        $capacityFlag = 1;
-                    else if ($collegeDetail->financial_info['id'] == '')
-                        $capacityFlag = 1;
-                    else
-                    {
-                        $broker = Brokers::find()->where(['connector_info.mobile' => Yii::$app->user->identity->username])->one();
-                        if ($broker != null)
-                        {
-                            if ($broker->financial_info == null)
-                                $flag = 1;
-                            else if ($broker->financial_info['id'] == '')
-                                $flag = 1;
-                        }
-                    }
-                }
-            }
-            else
-                $capacityFlag = 1;
-            if ($capacityFlag == 0)
-                $capacityType = array(
-                    '2' => 'محدود',
-                    '3' => 'سازمانی'
-                );
-            else
-                $capacityType = array(
-                    '3' => 'سازمانی'
-                );
+        foreach ($brokerQuery->all() as $broker) {
+            $ci = is_array($broker->connector_info) ? $broker->connector_info : [];
+            $name = trim((isset($ci['first_name']) ? $ci['first_name'] : '') . ' ' . (isset($ci['last_name']) ? $ci['last_name'] : ''));
+            if ((string) $broker->type === '1' && isset($broker->company_info['company_title']))
+                $name .= ' (شرکت ' . $broker->company_info['company_title'] . ')';
+            $contracts = [];
+            foreach ((array) $broker->contracts as $contract)
+                if (is_array($contract) && isset($contract['id']))
+                    $contracts[] = ['id' => (string) $contract['id'], 'title' => (isset($contract['title']) ? (string) $contract['title'] : '') . (isset($contract['share']) ? ' (' . $contract['share'] . ' درصد)' : '')];
+            if (empty($contracts))
+                continue; // بدون قرارداد، دوره قابل ثبت نیست (سرور هم قرارداد را الزامی می‌داند)
+            $brokers[] = ['id' => (string) $broker->_id, 'name' => $name !== '' ? $name : 'کارگزار بدون نام', 'contracts' => $contracts];
         }
-        return $capacityType;
+        $teachers = [];
+        foreach (Teachers::find()->select(['first_name', 'last_name'])->where(['colleges' => $id])->all() as $teacher)
+            $teachers[] = ['id' => (string) $teacher->_id, 'name' => trim($teacher->first_name . ' ' . $teacher->last_name)];
+        $lessons = [];
+        foreach (Lessons::find()->select(['title'])->where(['college' => $id])->all() as $lesson)
+            $lessons[] = ['id' => (string) $lesson->_id, 'name' => (string) $lesson->title];
+        return ['brokers' => $brokers, 'teachers' => $teachers, 'lessons' => $lessons];
     }
 
-    public function actionCheckUsername()
-    {
-        Yii::$app->response->format = \yii\web\Response::FORMAT_JSON;
-
-        $username = Yii::$app->request->post('username');
-
-        if (!$username) {
-            return ['success' => false, 'message' => 'نام کاربری ارسال نشده است'];
-        }
-        $existingUser = Users::find()
-            ->where(['username' => $username])
-            ->asArray()
-            ->one();
-
-        if ($existingUser) {
-            return [
-                'success' => true,
-                'exists' => true,
-                'userInfo' => [
-                    'first_name' => $existingUser['first_name'] ?? '',
-                    'last_name' => $existingUser['last_name'] ?? ''
-                ]
-            ];
-        }
-
-        return [
-            'success' => true,
-            'exists' => false
-        ];
-    }
-
-    public function actionEditCourse($_id)
-    {
-        if (isset($_GET['_id']))
-        {
-            $courseDetail = Courses::findOne($_GET['_id']);
-            if ($courseDetail != null)
-            {
-                if($this->allow($courseDetail->college))
-                {
-                    if (Yii::$app->user->identity->role == 'user' || Yii::$app->user->identity->role == 'cnt')
-                        $colleges = Colleges::find()->all();
-                    else
-                        $colleges = Colleges::find()->where(['_id' => Yii::$app->user->identity->college])->all();
-                    $searchModel = new CoursesMembers();
-                    $dataProvider = $searchModel->search(Yii::$app->request->queryParams, (string) $courseDetail->_id);
-                    $dataProvider->pagination->pageSize = 50;
-                    $discounts = Discounts::find()->where(['course_id' => (string) $courseDetail->_id])->all();
-                    $courseFinancial = CoursesFinancial::find()->where(['course_id' => (string) $courseDetail->_id])->andWhere(['payment_info.status' => '2'])->orderBy(['_id'=>SORT_DESC])->all();
-                    $allowEdit = true;
-                    if(($courseDetail->status == '1' || $courseDetail->status == '6') && Yii::$app->user->identity->role != 'user' && Yii::$app->user->identity->role != 'cnt')
-                        $allowEdit = false;
-                    return $this->render('edit-course', [
-                        'colleges' => ArrayHelper::map($colleges, function ($model) {
-                            return (string) $model->_id;
-                        }, 'title'),
-                        'courseDetail' => $courseDetail,
-                        'searchModel' => $searchModel,
-                        'dataProvider' => $dataProvider,
-                        'discounts' => $discounts,
-                        'allowEdit' => $allowEdit,
-                        'courseFinancial' => $courseFinancial
-                    ]);
-                }
-            }
-        }
-        return $this->redirect(['../courses']);
-    }
-
-    public function actionCopyCourse($_id)
-    {
-        if (isset($_GET['_id']))
-        {
-            $course = Courses::findOne($_GET['_id']);
-            if ($course != null)
-            {
-                if($this->allow($course->college))
-                {
-                    $model = new Courses();
-                    $model->setAttributes($course->attributes);
-                    if(Yii::$app->user->identity->role == 'broker')
-                        $model->status = '7';
-                    else
-                        $model->status = '2';
-                    $model->license_code = null;
-                    $model->rejection_reason = null;
-                    $model->mentors = null;
-                    $model->other_teachers = null;
-                    $model->adobe_status = null;
-                    $model->preview_image = $course->preview_image;
-//                $model->lessons = null;
-                    $lessons = $model->lessons;
-                    unset($lessons[0]['meeting']);
-                    $model->lessons = $lessons;
-                    $model->registrant = Yii::$app->user->identity->username;
-                    $model->save();
-                    return $this->redirect(['../courses/edit-course?_id='.(string) $model->_id]);
-                }
-            }
-        }
-        return $this->redirect(['../courses']);
-    }
-
-    public function actionManageCourse($_id)
-    {
-        if (isset($_GET['_id']))
-        {
-            $courseDetail = Courses::findOne($_GET['_id']);
-            if ($courseDetail != null)
-            {
-                if($this->allow($courseDetail->college))
-                {
-                    $lessons = array();
-                    $user = Yii::$app->user->identity;
-                    if ($user->role == 'user' || $user->role == 'emp' || $user->role == 'brokers')
-                        $lessons = $courseDetail->lessons;
-                    else if ($user->role == 'teacher') {
-                        $teacherDetail = Teachers::find()->where(['mobile' => $user->username])->one();
-                        if ($teacherDetail != null) {
-                            foreach ($courseDetail->lessons as $lesson)
-                                if ($lesson['teachers'] == (string) $teacherDetail->_id)
-                                    array_push($lessons, $lesson);
-                        }
-                    }
-                    return $this->render('manage-course', [
-                        'courseDetail' => $courseDetail,
-                        'lessons' => $lessons
-                    ]);
-                }
-            }
-        }
-        return $this->redirect(['../courses']);
-    }
+    // ================================================================== ثبت و ویرایش
 
     public function actionNew()
     {
-        if (Yii::$app->request->isPost) {
-            //            $find = Courses::find()->where(['mobile' => Yii::$app->request->post()['Teachers']['mobile']])->one();
-            if (true) {
-                $model = new Courses();
-                // اصلاح ۲۰۲۶-۰۸-۲۸ (طبق سند بررسی دوره‌های کوتاه‌مدت، بخش ۲۰/۲۹): قبلاً این
-                // مدل در سناریوی پیش‌فرض ذخیره می‌شد که هیچ قانون required/فرمتی روش اجرا
-                // نمی‌شد (فقط 'safe'). حالا با تنظیم سناریوی مخصوص دوره کوتاه‌مدت، دقیقاً
-                // همون فیلدهایی که در Modal هم required‌ان (دانشکده، قیمت، زمان، محل، نوع
-                // دوره، مدت، ظرفیت، عنوان، و درسِ انتخاب‌شده) سمت سرور هم اعتبارسنجی می‌شن —
-                // مستقل از اینکه فرانت‌اند چی فرستاده (بخش ۲۳ سند: UI Restriction ≠ Security).
-                $model->scenario = Courses::SCENARIO_CREATE_COURSE;
-                $model->load(Yii::$app->request->post());
-                $model->type = '1';
-                if (Yii::$app->user->identity->role == 'user' || $model->college == '663b1d28c9c6ce2e65073e22')
-                    $model->status = '1';
-                else
-                    $model->status = '2';
-                if(Yii::$app->user->identity->role == 'broker' || $model->college == '65afa2ea5136ec5b5b0c4064')
-                    $model->status = '7';
-                $model->show_in_site = true;
-                $model->credit = '0';
-                $model->registrant = Yii::$app->user->identity->username;
-                if(isset($_POST['Courses']['broker']))
-                    if(Yii::$app->request->post()['Courses']['broker']['_id'] == null || Yii::$app->request->post()['Courses']['broker']['_id'] == '')
-                        $model->broker = null;
-                if ($_FILES['Courses']['name']['contract_file'] != '')
-                {
-                    $file = UploadedFile::getInstance($model, 'contract_file');
-                    $file_ext = $file->extension;
-                    $file_name = uniqid() . '.' . $file_ext;
-                    $file->saveAs('../../frontend/web/contract_files/' . $file_name);
-                    if (UploadedFile::getInstance($model, 'contract_file') != null)
-                        $model->contract_file = $file_name;
-                }
-                if ($model->save())
-                {
-                    $lesson = Lessons::findOne($model->lessons[0]['_id']);
-                    if ($lesson != null)
-                    {
-                        $model->preview_image = $lesson->imagePreview;
-                        // Calculating the member registration deadline
-                        if(array_key_exists('date', $model->lessons[0]))
-                        {
-                            $startDate = $model->lessons[0]['date']['from'];
-                            $endDate = $model->lessons[0]['date']['to'];
+        $model = new Courses();
+        $model->scenario = Courses::SCENARIO_CREATE_COURSE;
+        if (!ShortCourseForm::apply($model, Yii::$app->request->post('Courses'), true))
+            return $this->back('error', ShortCourseForm::$error);
 
-                            $start = DateTime::createFromFormat('Y-m-d', $startDate);
-                            $end = DateTime::createFromFormat('Y-m-d', $endDate);
+        $model->type = '1';
+        $role = CourseAccess::role();
+        $unit = (string) $model->college;
+        if ($role === 'user' || $unit === self::AUTO_APPROVE_UNIT)
+            $model->status = CourseStatus::ACTIVE;
+        else if ($role === 'broker' || $unit === self::UNIT_REVIEW_UNIT)
+            $model->status = CourseStatus::AWAITING_UNIT;
+        else
+            $model->status = CourseStatus::AWAITING;
+        $model->modified = false;
+        $model->show_in_site = true;
+        $model->credit = '0';
+        $model->registrant = (string) Yii::$app->user->identity->username;
 
-                            if ($start && $end && $end > $start) {
-                                $interval = $start->diff($end);
-                                $quarterDays = intval($interval->days / 4);
-
-                                $deadline = clone $start;
-                                $deadline->add(new DateInterval('P' . $quarterDays . 'D'));
-                                $model->deadline_date = $deadline->format('Y-m-d');
-                            } else {
-                                $model->deadline_date = null;
-                            }
-                        }
-                        // Calculating the member registration deadline
-                        $model->save();
-                    }
-                   if(Yii::$app->user->identity->role == 'user' || $model->college == '663b1d28c9c6ce2e65073e22')
-                   {
-                       $lastLicense = Generals::find()->where(['type' => 'license_code'])->one();
-                       if($lastLicense != null)
-                       {
-                           $college = Colleges::findOne($model->college);
-                           $model->license_code = $college->prefix.'-'.(string) ($lastLicense->data + 1);
-                           $lastLicense->updateCounters(['data' => 1]);
-                           $lastLicense->save();
-                       }
-                   }
-                    // Call AdobeConnect For Create Meetings Course
-                    $adminRole = Admin::find()->where(['role' => 'user'])->one();
-                    if($adminRole != null && ($model->content_type == '1' || $model->content_type == '2'))
-                    {
-                        $curl = curl_init();
-
-                        curl_setopt_array($curl, array(
-                            CURLOPT_URL => Yii::getAlias('@baseUrl').'/adobe-connect/create-meeting/'.(string) $model->_id,
-                            CURLOPT_RETURNTRANSFER => true,
-                            CURLOPT_ENCODING => '',
-                            CURLOPT_MAXREDIRS => 10,
-                            CURLOPT_TIMEOUT => 0,
-                            CURLOPT_FOLLOWLOCATION => true,
-                            CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-                            CURLOPT_CUSTOMREQUEST => 'POST',
-                            CURLOPT_HTTPHEADER => array(
-                                '_id: '.(string) $adminRole->_id
-                            ),
-                        ));
-                        $response = curl_exec($curl);
-                        curl_close($curl);
-                        $response = json_decode($response);
-                        if(property_exists($response,'status'))
-                        {
-                            if($response->status == 'ok')
-                                $model->adobe_status = '1';
-                            else
-                                $model->adobe_status = '0';
-                        }
-                        else
-                            $model->adobe_status = '0';
-                    }
-                    // Call AdobeConnect For Create Meetings Course
-                    if($model->discount_price == '')
-                        $model->discount_price = $model->price;
-                    $model->save();
-                    if($model->adobe_status === '0')
-                        Yii::$app->session->setFlash('status', '11');
-                    else
-                        Yii::$app->session->setFlash('status', '1');
-                } else
-                    Yii::$app->session->setFlash('status', '2');
-            } else
-                Yii::$app->session->setFlash('status', '3');
+        // قرارداد (برای ظرفیت سازمانی الزامی): فقط PDF یا تصویر، با نام تصادفی
+        $contract = UploadedFile::getInstance($model, 'contract_file');
+        if ($contract !== null) {
+            $name = SecureUpload::save($contract, 'document', self::CONTRACT_DIR);
+            if ($name === null)
+                return $this->back('error', 'فایل قرارداد: ' . SecureUpload::$lastError);
+            $model->contract_file = $name;
         }
-        return $this->redirect(Yii::$app->request->referrer);
+
+        $lesson = Lessons::findOne($model->lessons[0]['_id']);
+        if ($lesson !== null)
+            $model->preview_image = $lesson->imagePreview;
+
+        if (!$model->validate()) {
+            SecureUpload::delete(self::CONTRACT_DIR, $model->contract_file);
+            return $this->back('error', $this->firstError($model));
+        }
+        if ($model->status === CourseStatus::ACTIVE && !$this->assignLicenseCode($model)) {
+            SecureUpload::delete(self::CONTRACT_DIR, $model->contract_file);
+            return $this->back('error', 'تولید کد مجوز ممکن نشد (کد واحد یا شمارنده‌ی کد مجوز تعریف نشده است)');
+        }
+        if (!$model->save(false)) {
+            SecureUpload::delete(self::CONTRACT_DIR, $model->contract_file);
+            return $this->back('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید');
+        }
+
+        $message = 'دوره «' . $model->title['main_fa'] . '» ثبت شد';
+        if (ClassroomPlatforms::hasOnlineClass($model)) {
+            $result = ClassroomPlatforms::forCourse($model)->createCourseMeetings((string) $model->_id);
+            $model->adobe_status = $result === true ? '1' : '0';
+            $model->save(false, ['adobe_status']);
+            if ($result !== true)
+                return $this->back('warning', $message . '؛ اما ساخت کلاس آنلاین ناموفق بود و از فهرست قابل ثبت مجدد است');
+        }
+        return $this->back('success', $message);
     }
 
     public function actionEdit()
     {
-        if (Yii::$app->request->isPost) {
-            $find = Courses::findOne(Yii::$app->request->post()['Courses']['_id']);
-            if ($find != null)
-            {
-                $from = '';
-                $to = '';
-                $time = '';
-                $meetings = null;
-                $lessons = $find->lessons[0];
-                $date = $find->lessons[0]['date'];
-                if(array_key_exists('from', $lessons['date']))
-                    $from = $find->lessons[0]['date']['from'];
-                if(array_key_exists('to', $lessons['date']))
-                    $to = $find->lessons[0]['date']['to'];
-                if(array_key_exists('time', $lessons['date']))
-                    $time = $find->lessons[0]['date']['time'];
-                if(array_key_exists('meeting', $lessons))
-                    $meetings = $lessons['meeting'];
-                if(isset($_POST['Courses']['lessons'][0]['date']['time']))
-                    $time = Yii::$app->request->post()['Courses']['lessons'][0]['date']['time'];
-                $find->load(Yii::$app->request->post());
-                // اصلاح ۲۰۲۶-۰۸-۲۸: مشابه actionNew()، سناریوی مخصوص ویرایش دوره کوتاه‌مدت
-                // فعال می‌شه تا همون فیلدهای required فرم ویرایش سمت سرور هم چک بشن.
-                $find->scenario = Courses::SCENARIO_EDIT_COURSE;
-                if($find->status == '4')
-                    $find->status = '2';
-                if ($find->save())
-                {
-                    if(Yii::$app->user->identity->role != 'user' && Yii::$app->user->identity->role != 'cnt')
-                    {
-                        $date = $find->lessons[0]['date'];
-                        $date['time'] = $time;
-                        $date['from'] = $from;
-                        $date['to'] = $to;
-                        $lessons['meeting'] = $meetings;
-                        $finalLessons = array();
-                        array_push($finalLessons, $lessons);
-                        $find->lessons = $finalLessons;
-                        $find->save();
-                    }
-                    // Calculating the member registration deadline
-                    if(array_key_exists('date', $find->lessons[0]))
-                    {
-                        $startDate = $find->lessons[0]['date']['from'];
-                        $endDate = $find->lessons[0]['date']['to'];
+        $input = Yii::$app->request->post('Courses');
+        $id = is_array($input) && isset($input['_id']) && is_string($input['_id']) ? $input['_id'] : '';
+        $model = $this->findCourse($id);
+        if ($model === null || !CourseAccess::canEdit($model))
+            return $this->back('error', 'دوره یافت نشد یا امکان ویرایش آن را ندارید (دوره‌ی تأییدشده را فقط مدیر سیستم ویرایش می‌کند)');
 
-                        $start = DateTime::createFromFormat('Y-m-d', $startDate);
-                        $end = DateTime::createFromFormat('Y-m-d', $endDate);
+        $oldLessonId = isset($model->lessons[0]['_id']) ? (string) $model->lessons[0]['_id'] : '';
+        $oldServer = (string) $model->classroom_server;
+        $model->scenario = Courses::SCENARIO_EDIT_COURSE;
+        if (!ShortCourseForm::apply($model, $input, false))
+            return $this->back('error', ShortCourseForm::$error);
+        if (!$model->validate())
+            return $this->back('error', $this->firstError($model));
 
-                        if ($start && $end && $end > $start) {
-                            $interval = $start->diff($end);
-                            $quarterDays = intval($interval->days / 4);
+        // ویرایش دوره‌ی «نیاز به اصلاح» = ارسال مجدد با برچسب «اصلاح‌شده، در انتظار بررسی» (بند ۵.۳)
+        if (in_array((string) $model->status, [CourseStatus::NEEDS_CORRECTION, CourseStatus::UNIT_CORRECTION], true))
+            CourseStatus::submit($model, CourseAccess::role() === 'broker');
 
-                            $deadline = clone $start;
-                            $deadline->add(new DateInterval('P' . $quarterDays . 'D'));
-                            $find->deadline_date = $deadline->format('Y-m-d');
-                        } else {
-                            $find->deadline_date = null;
-                        }
-                        $find->save();
-                    }
-                    // Calculating the member registration deadline
-                    $adminRole = Admin::find()->where(['role' => 'user'])->one();
-                    if($adminRole != null)
-                    {
-                        $curl = curl_init();
+        if (!$model->save(false))
+            return $this->back('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید');
 
-                        curl_setopt_array($curl, array(
-                            CURLOPT_URL => Yii::getAlias('@baseUrl').'/adobe-connect/create-meeting/'.(string) $find->_id.'?new-lesson='.$find->lessons[0]['_id'],
-                            CURLOPT_RETURNTRANSFER => true,
-                            CURLOPT_ENCODING => '',
-                            CURLOPT_MAXREDIRS => 10,
-                            CURLOPT_TIMEOUT => 0,
-                            CURLOPT_FOLLOWLOCATION => true,
-                            CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-                            CURLOPT_CUSTOMREQUEST => 'POST',
-                            CURLOPT_HTTPHEADER => array(
-                                '_id: '.(string) $adminRole->_id
-                            ),
-                        ));
-                        $response = curl_exec($curl);
-                        curl_close($curl);
-                    }
-                    Yii::$app->session->setFlash('status', '4');
-                }
-                else
-                    Yii::$app->session->setFlash('status', '2');
+        $newLessonId = (string) $model->lessons[0]['_id'];
+        $message = 'دوره «' . $model->title['main_fa'] . '» ویرایش شد';
+        if (ClassroomPlatforms::hasOnlineClass($model)) {
+            $result = true;
+            if ($oldServer !== (string) $model->classroom_server)
+                $result = ClassroomPlatforms::forCourse($model)->createCourseMeetings((string) $model->_id); // سرور عوض شد: کلاس روی سرور جدید
+            else if ($newLessonId !== $oldLessonId)
+                $result = ClassroomPlatforms::forCourse($model)->createCourseMeetings((string) $model->_id, $newLessonId);
+            if ($result !== true) {
+                $model->adobe_status = '0';
+                $model->save(false, ['adobe_status']);
+                return $this->back('warning', $message . '؛ اما ساخت کلاس آنلاین روی سرور انتخاب‌شده ناموفق بود و از فهرست قابل ثبت مجدد است');
             }
         }
-        return $this->redirect(['../courses']);
+        return $this->back('success', $message);
     }
+
+    public function actionEditCourse($_id)
+    {
+        $courseDetail = $this->findCourse($_id);
+        if ($courseDetail === null || !CourseAccess::canView($courseDetail))
+            return $this->back('error', 'دوره یافت نشد یا به آن دسترسی ندارید', ['index']);
+
+        $searchModel = new CourseMembersSearch();
+        $dataProvider = $searchModel->search(Yii::$app->request->queryParams, (string) $courseDetail->_id);
+        return $this->render('edit-course', [
+            'memberStats' => CourseMembersSearch::stats((string) $courseDetail->_id),
+            'colleges' => $this->selectableUnits(),
+            'servers' => ClassroomServers::activeOptions(),
+            'courseDetail' => $courseDetail,
+            'searchModel' => $searchModel,
+            'dataProvider' => $dataProvider,
+            'discounts' => Discounts::find()->where(['course_id' => (string) $courseDetail->_id])->all(),
+            'allowEdit' => CourseAccess::canEdit($courseDetail),
+        ]);
+    }
+
+    /**
+     * اطلاعات مالی کامل یک عضو در همین دوره (نوع پرداخت، کانال، سهم واحد و کارگزار، اقساط) — JSON.
+     * همان جدول پروفایل دانشپذیر؛ فقط برای کسی که دوره را مدیریت می‌کند و فقط برای عضوِ همین دوره.
+     */
+    public function actionMemberFinance($_id)
+    {
+        Yii::$app->response->format = Response::FORMAT_JSON;
+        $course = $this->findCourse((string) $_id);
+        if ($course === null || !CourseAccess::canManage($course))
+            return ['title' => 'اطلاعات مالی', 'html' => Html::tag('div', 'دوره یافت نشد یا به آن دسترسی ندارید', ['class' => 'text-danger'])];
+        $memberId = (string) Yii::$app->request->post('member');
+        $member = preg_match('/^[a-f0-9]{24}$/i', $memberId)
+            ? Users::find()->where(['_id' => $memberId, 'courses._id' => (string) $course->_id])->one()
+            : null;
+        if ($member === null)
+            return ['title' => 'اطلاعات مالی', 'html' => Html::tag('div', 'این دانشپذیر عضو دوره نیست', ['class' => 'text-danger'])];
+        $profile = new StudentProfile($member);
+        return [
+            'title' => 'اطلاعات مالی ' . trim($member->first_name . ' ' . $member->last_name),
+            'html' => $this->renderPartial('@frontend/views/users-manage/profile/_finance', [
+                'profile' => $profile,
+                'orders' => $profile->ordersForCourse((string) $course->_id),
+                'installments' => $profile->installmentsForCourse((string) $course->_id),
+                'showCourse' => false,
+            ]),
+        ];
+    }
+
+    /**
+     * کپی دوره با درس‌ها (بدون کلاس آنلاین، کد مجوز و سوابق بررسی).
+     */
+    public function actionCopyCourse($_id)
+    {
+        $course = $this->findCourse($_id);
+        if ($course === null || !CourseAccess::canManage($course))
+            return $this->back('error', 'دوره یافت نشد یا به آن دسترسی ندارید');
+
+        $model = new Courses();
+        $attributes = $course->attributes;
+        unset($attributes['_id']);
+        $model->setAttributes($attributes, false);
+        $lessons = [];
+        foreach ((array) $course->lessons as $lesson) {
+            if (!is_array($lesson))
+                continue;
+            unset($lesson['meeting']); // کلاس آنلاین برای دوره‌ی جدید دوباره ساخته می‌شود
+            $lessons[] = $lesson;
+        }
+        $model->lessons = $lessons;
+        $model->status = CourseAccess::role() === 'broker' ? CourseStatus::AWAITING_UNIT : CourseStatus::AWAITING;
+        $model->modified = false;
+        $model->license_code = null;
+        $model->rejection_reason = null;
+        $model->mentors = null;
+        $model->other_teachers = null;
+        $model->adobe_status = null;
+        $model->classroom_meetings = null;
+        $model->registrant = (string) Yii::$app->user->identity->username;
+        if (!$model->save(false))
+            return $this->back('error', 'کپی دوره ناموفق بود');
+        Yii::$app->session->setFlash(self::FLASH, ['type' => 'success', 'message' => 'نسخه‌ی کپی ساخته شد؛ اطلاعات آن را بررسی و در صورت نیاز ویرایش کنید']);
+        return $this->redirect(['edit-course', '_id' => (string) $model->_id]);
+    }
+
+    // ================================================================== حذف
+
+    public function actionShow_course_users()
+    {
+        Yii::$app->response->format = Response::FORMAT_JSON;
+        $course = $this->findCourse((string) Yii::$app->request->post('id'));
+        if ($course === null || !CourseAccess::canManage($course))
+            return ['ok' => false, 'message' => 'دوره یافت نشد یا به آن دسترسی ندارید'];
+        $title = isset($course->title['main_fa']) ? (string) $course->title['main_fa'] : '';
+        if (Users::find()->where(['courses._id' => (string) $course->_id])->exists())
+            return ['ok' => false, 'message' => 'دوره‌ی «' . $title . '» دانشپذیر دارد و قابل حذف نیست'];
+        if (!CourseAccess::canDelete($course))
+            return ['ok' => false, 'message' => 'دوره‌ی تأییدشده را فقط مدیر سیستم می‌تواند حذف کند'];
+        return ['ok' => true, 'message' => 'آیا از حذف دوره‌ی «' . $title . '» مطمئن هستید؟'];
+    }
+
+    public function actionDelete_course()
+    {
+        $course = $this->findCourse((string) Yii::$app->request->post('_id'));
+        if ($course === null || !CourseAccess::canDelete($course))
+            return $this->back('error', 'این دوره قابل حذف نیست (دانشپذیر دارد یا دسترسی لازم را ندارید)');
+        if ($course->delete())
+            return $this->back('success', 'دوره حذف شد');
+        return $this->back('error', 'خطا در حذف دوره');
+    }
+
+    /**
+     * نمایش/مخفی کردن دوره‌ی فعال در سایت اصلی.
+     */
+    public function actionToggleSite()
+    {
+        $course = $this->findCourse((string) Yii::$app->request->post('_id'));
+        if ($course === null || !CourseAccess::canManage($course))
+            return $this->back('error', 'دوره یافت نشد یا به آن دسترسی ندارید');
+        if ((string) $course->status !== CourseStatus::ACTIVE)
+            return $this->back('warning', 'فقط دوره‌ی فعال در سایت نمایش داده می‌شود');
+        $course->show_in_site = $course->show_in_site === false;
+        if ($course->save(false, ['show_in_site']))
+            return $this->back('success', $course->show_in_site ? 'دوره در سایت نمایش داده می‌شود' : 'دوره از سایت مخفی شد');
+        return $this->back('error', 'خطا در ذخیره‌سازی');
+    }
+
+    /**
+     * ساخت مجدد کلاس آنلاین دوره (وقتی ساخت اولیه ناموفق بوده).
+     */
+    public function actionRegisterOnline()
+    {
+        $course = $this->findCourse((string) Yii::$app->request->post('_id'));
+        if ($course === null || !CourseAccess::canManage($course))
+            return $this->back('error', 'دوره یافت نشد یا به آن دسترسی ندارید');
+        if (!ClassroomPlatforms::hasOnlineClass($course))
+            return $this->back('warning', 'این دوره کلاس آنلاین ندارد');
+        $platform = ClassroomPlatforms::forCourse($course);
+        $result = $platform->createCourseMeetings((string) $course->_id);
+        $course->adobe_status = $result === true ? '1' : '0';
+        $course->save(false, ['adobe_status']);
+        if ($result === true)
+            return $this->back('success', 'کلاس آنلاین دوره در ' . $platform->title() . ' ساخته شد');
+        return $this->back('error', $result === null ? 'ارتباط با سرور ' . $platform->title() . ' برقرار نشد' : 'ساخت کلاس آنلاین ناموفق بود');
+    }
+
+    // ================================================================== گزارش‌ها
+
+    public function actionReport()
+    {
+        @set_time_limit(0);
+        $searchModel = new ShortCoursesSearch();
+        $query = $searchModel->search(Yii::$app->request->queryParams)->query;
+        $writer = new XlsxWriter(
+            ['ردیف', 'عنوان اصلی فارسی', 'عنوان اصلی انگلیسی', 'عنوان فارسی داخل گواهی', 'عنوان انگلیسی داخل گواهی', 'وضعیت دوره', 'کد مجوز',
+                'قیمت اصلی (تومان)', 'قیمت با تخفیف (تومان)', 'مدت زمان (ساعت)', 'ظرفیت', 'نوع دوره', 'تاریخ شروع', 'تاریخ پایان', 'ساعت شروع',
+                'واحد', 'کارگزار', 'درس', 'مدرس', 'تاریخ ثبت', 'تعداد دانشپذیر'],
+            [7, 40, 30, 40, 30, 22, 16, 16, 16, 12, 14, 12, 12, 12, 10, 24, 24, 30, 22, 12, 14]
+        );
+        $units = UsersDirectory::collegeTitles();
+        foreach ($query->batch(300) as $courses) {
+            $ids = $teacherIds = $lessonIds = $brokerIds = [];
+            foreach ($courses as $course) {
+                $ids[] = (string) $course->_id;
+                if (isset($course->lessons[0]['teachers']) && is_string($course->lessons[0]['teachers']))
+                    $teacherIds[] = $course->lessons[0]['teachers'];
+                if (isset($course->lessons[0]['_id']) && is_string($course->lessons[0]['_id']))
+                    $lessonIds[] = $course->lessons[0]['_id'];
+                if (isset($course->broker['_id']) && is_string($course->broker['_id']))
+                    $brokerIds[] = $course->broker['_id'];
+            }
+            $teachers = $this->namesById(Teachers::class, $teacherIds);
+            $lessons = $this->namesById(Lessons::class, $lessonIds, 'title');
+            $brokers = $this->brokerNames($brokerIds);
+            $members = $this->memberCounts($ids);
+            foreach ($courses as $course) {
+                $id = (string) $course->_id;
+                $t = is_array($course->title) ? $course->title : [];
+                $d = isset($course->lessons[0]['date']) && is_array($course->lessons[0]['date']) ? $course->lessons[0]['date'] : [];
+                $cap = is_array($course->student_capacity) ? $course->student_capacity : [];
+                $capacity = isset($cap['type']) ? ((string) $cap['type'] === '2' ? (isset($cap['number']) ? $cap['number'] . ' نفر' : 'محدود') : ((string) $cap['type'] === '3' ? 'سازمانی' : 'نامحدود')) : '';
+                $teacherId = isset($course->lessons[0]['teachers']) ? (string) $course->lessons[0]['teachers'] : '';
+                $lessonId = isset($course->lessons[0]['_id']) ? (string) $course->lessons[0]['_id'] : '';
+                $brokerId = isset($course->broker['_id']) ? (string) $course->broker['_id'] : '';
+                $writer->addRow([
+                    $writer->rowCount() + 1,
+                    isset($t['main_fa']) ? (string) $t['main_fa'] : '', isset($t['main_en']) ? (string) $t['main_en'] : '',
+                    isset($t['degree_fa']) ? (string) $t['degree_fa'] : '', isset($t['degree_en']) ? (string) $t['degree_en'] : '',
+                    CourseStatus::label($course)[0],
+                    (string) $course->license_code,
+                    is_numeric($course->price) ? (float) $course->price : '', is_numeric($course->discount_price) ? (float) $course->discount_price : '',
+                    is_numeric($course->duration) ? (int) $course->duration : '',
+                    $capacity,
+                    UsersDirectory::contentType($course->content_type),
+                    isset($d['from']) ? (string) $d['from'] : '', isset($d['to']) ? (string) $d['to'] : '', isset($d['time']) ? (string) $d['time'] : '',
+                    isset($units[(string) $course->college]) ? $units[(string) $course->college] : '',
+                    isset($brokers[$brokerId]) ? $brokers[$brokerId] : '',
+                    isset($lessons[$lessonId]) ? $lessons[$lessonId] : '',
+                    isset($teachers[$teacherId]) ? $teachers[$teacherId] : '',
+                    UsersDirectory::jdate('Y/m/d', hexdec(substr($id, 0, 8))),
+                    isset($members[$id]) ? $members[$id] : 0,
+                ]);
+            }
+        }
+        return $this->sendXlsx($writer, 'ShortCourses');
+    }
+
+    /**
+     * خروجی اکسل اعضای دوره با همان فیلترهای تب «اعضا»: مشخصات، وضعیت، ثبت‌کننده، پرداخت و سهم‌ها، گواهی.
+     */
+    public function actionMembers_report()
+    {
+        $course = $this->findCourse((string) Yii::$app->request->get('_id'));
+        if ($course === null || !CourseAccess::canView($course))
+            return $this->back('error', 'دوره یافت نشد یا به آن دسترسی ندارید');
+        $courseId = (string) $course->_id;
+        $canSeeMoney = CourseAccess::canManage($course);
+        $headers = ['ردیف', 'نام', 'نام خانوادگی', 'نام انگلیسی', 'نام خانوادگی انگلیسی', 'نام کاربری', 'کد ملی', 'جنسیت', 'شماره تماس',
+            'وضعیت در دوره', 'درخواست انصراف', 'ثبت‌کننده', 'تاریخ عضویت در سامانه'];
+        $widths = [7, 14, 18, 14, 18, 22, 13, 8, 14, 18, 12, 28, 14];
+        if ($canSeeMoney) {
+            $headers = array_merge($headers, ['نوع پرداخت', 'کانال پرداخت', 'تاریخ پرداخت', 'مبلغ پرداختی (تومان)', 'سهم واحد (تومان)', 'سهم کارگزار (تومان)']);
+            $widths = array_merge($widths, [10, 16, 12, 16, 16, 16]);
+        }
+        $headers[] = 'وضعیت گواهی';
+        $widths[] = 20;
+        $writer = new XlsxWriter($headers, $widths);
+
+        $searchModel = new CourseMembersSearch();
+        $query = $searchModel->query(Yii::$app->request->queryParams, $courseId)
+            ->select(['first_name', 'last_name', 'username', 'courses', 'issuance_certificate_information'])
+            ->orderBy(['last_name' => SORT_ASC])->asArray();
+        $certificates = [];
+        foreach (\app\models\CertificateRequests::find()->select(['username', 'status'])->where(['course_id' => $courseId])->asArray()->all() as $request)
+            $certificates[(string) $request['username']] = (string) $request['status'];
+        $str = function ($array, $key) {
+            return isset($array[$key]) && is_scalar($array[$key]) ? (string) $array[$key] : '';
+        };
+        foreach ($query->batch(500) as $rows) {
+            $registrantNames = [];
+            $usernames = [];
+            foreach ($rows as $row) {
+                $usernames[] = $str($row, 'username');
+                foreach ((array) (isset($row['courses']) ? $row['courses'] : []) as $item)
+                    if (is_array($item) && isset($item['_id'], $item['registrant']) && (string) $item['_id'] === $courseId)
+                        $registrantNames[] = $item['registrant'];
+            }
+            $registrants = UsersDirectory::registrants($registrantNames);
+            // آخرین سفارش موفق هر عضو برای همین دوره
+            $orders = [];
+            if ($canSeeMoney)
+                foreach (\app\models\Orders::find()->where(['username' => $usernames, 'orders._id' => $courseId])->orderBy(['_id' => SORT_ASC])->all() as $order)
+                    if (StudentProfile::isSuccessfulOrder($order))
+                        $orders[(string) $order->username] = $order;
+            foreach ($rows as $row) {
+                $item = [];
+                foreach ((array) (isset($row['courses']) ? $row['courses'] : []) as $c)
+                    if (is_array($c) && isset($c['_id']) && (string) $c['_id'] === $courseId)
+                        $item = $c;
+                $username = $str($row, 'username');
+                $registrant = UsersDirectory::describeUsername($str($item, 'registrant'), $username, $registrants);
+                $info = isset($row['issuance_certificate_information']) && is_array($row['issuance_certificate_information']) ? $row['issuance_certificate_information'] : [];
+                $gender = $str($info, 'gender');
+                $line = [
+                    $writer->rowCount() + 1,
+                    $str($row, 'first_name'),
+                    $str($row, 'last_name'),
+                    $str($info, 'first_name_en'),
+                    $str($info, 'last_name_en'),
+                    $username,
+                    $str($info, 'id'),
+                    $gender === '1' ? 'مرد' : ($gender === '0' ? 'زن' : ''),
+                    $str($info, 'phone'),
+                    UsersDirectory::courseStatus(isset($item['status']) ? $item['status'] : '0')[0],
+                    !empty($item['begin_deleted']) ? 'در انتظار' : '',
+                    $registrant['name'] . ($registrant['roleLabel'] !== '' ? ' (' . $registrant['roleLabel'] . ')' : ''),
+                    isset($row['_id']) ? UsersDirectory::jdate('Y/m/d', hexdec(substr((string) $row['_id'], 0, 8)), 'en') : '',
+                ];
+                if ($canSeeMoney) {
+                    $order = isset($orders[$username]) ? $orders[$username] : null;
+                    if ($order !== null) {
+                        list($type, $channel) = StudentProfile::paymentType($order);
+                        $shares = StudentProfile::shares($order);
+                        $line = array_merge($line, [$type, $channel, is_array($order->payment_info) ? $str($order->payment_info, 'date') : '',
+                            StudentProfile::orderPaidAmount($order), round($shares['college']), round($shares['broker'])]);
+                    } else {
+                        $line = array_merge($line, ['بدون پرداخت', '', '', '', '', '']);
+                    }
+                }
+                // بند ۷.۶ صورتجلسه: مشخص باشد چه کسانی گواهی گرفته‌اند
+                $line[] = isset($certificates[$username]) ? StudentProfile::certificateStatus($certificates[$username])[0] : 'درخواست نشده';
+                $writer->addRow($line);
+            }
+        }
+        return $this->sendXlsx($writer, 'CourseMembers');
+    }
+
+    // ============================================== افزودن اعضا از اکسل
+
+    public function actionMembersTemplate()
+    {
+        $path = CourseMembersImport::template();
+        $response = Yii::$app->response->sendFile($path, 'course-members-template.xlsx');
+        $response->on(Response::EVENT_AFTER_SEND, function () use ($path) {
+            @unlink($path);
+        });
+        return $response;
+    }
+
+    /**
+     * بررسی فایل (AJAX): پیش‌نمایش ردیف‌ها، خطاها، شرایط دوره و هزینه. تا وقتی خطایی هست دکمه‌ی ثبت نیست.
+     */
+    public function actionMembersCheck($_id)
+    {
+        Yii::$app->response->format = Response::FORMAT_JSON;
+        $course = $this->findCourse((string) $_id);
+        if ($course === null || !CourseAccess::canManage($course))
+            return ['ok' => false, 'html' => Html::tag('div', 'دوره یافت نشد یا به آن دسترسی ندارید', ['class' => 'alert alert-danger'])];
+        $stored = CourseMembersImport::store(isset($_FILES['file']) ? $_FILES['file'] : null, (string) $course->_id);
+        if ($stored['error'] !== null)
+            return ['ok' => false, 'html' => Html::tag('div', Html::encode($stored['error']), ['class' => 'alert alert-danger'])];
+        $analysis = CourseMembersImport::analyze(CourseMembersImport::pathFor($stored['token'], (string) $course->_id), $course);
+        if (!$analysis['ok'])
+            CourseMembersImport::discard(); // با خطا امکان ثبت نیست؛ فایل اصلاح‌شده دوباره بارگذاری می‌شود
+        return [
+            'ok' => $analysis['ok'],
+            'html' => $this->renderPartial('_members-import-preview', [
+                'analysis' => $analysis,
+                'course' => $course,
+                'token' => $analysis['ok'] ? $stored['token'] : null,
+            ]),
+        ];
+    }
+
+    public function actionMembersImport($_id)
+    {
+        $course = $this->findCourse((string) $_id);
+        if ($course === null || !CourseAccess::canManage($course))
+            return $this->back('error', 'دوره یافت نشد یا به آن دسترسی ندارید');
+        $back = ['edit-course', '_id' => (string) $course->_id, 'tab' => 'tab-id2'];
+        $path = CourseMembersImport::pathFor(Yii::$app->request->post('token'), (string) $course->_id);
+        if ($path === null)
+            return $this->back('error', 'فایل بررسی‌شده پیدا نشد یا منقضی شده است؛ دوباره بارگذاری کنید', $back);
+        $mutex = Yii::$app->has('mutex') ? Yii::$app->mutex : null;
+        $lock = 'course-members-import-' . (string) $course->_id;
+        if ($mutex !== null && !$mutex->acquire($lock, 10))
+            return $this->back('error', 'ثبت دیگری برای این دوره در حال انجام است؛ چند لحظه بعد دوباره تلاش کنید', $back);
+        try {
+            $result = CourseMembersImport::import($path, $course);
+        } finally {
+            CourseMembersImport::discard();
+            if ($mutex !== null)
+                $mutex->release($lock);
+        }
+        return $this->back($result['ok'] ? (empty($result['failed']) ? 'success' : 'warning') : 'error', $result['message'], $back);
+    }
+
+    // ============================================== اکشن‌های کمکی فرم (سازگار با صفحه‌ی ویرایش)
 
     public function actionBrokers($id)
     {
-        $collegeBrokers = Brokers::find()->where(['college' => $id])->all();
-        $collegeTeachers = Teachers::find()->where(['like', 'colleges', $id])->all();
-        $collegeLessons = Lessons::find()->where(['college' => $id])->all();
-        $brokers = null;
-        $teachers = null;
-        $lessons = null;
-        if ($collegeBrokers != null) {
-            ob_start();
-            $model = new Courses();
-            $form = ActiveForm::begin(
-                [
-                    'action' => ['new'],
-                    'options' => [
-                        'enctype' => 'multipart/form-data',
-                        'name' => 'form2',
-                    ],
-
-                ]
-            );
-            echo $form->field($model, 'broker[_id]')->dropDownList(
-                ArrayHelper::map($collegeBrokers, function ($model) {
-                    return (string) $model->_id;
-                }, function ($model) {
-                    return $model->company_info['company_title'];
-                }),
-                [
-                    'prompt' => 'لطفا کارگزار را انتخاب کنید',
-                    'class' => 'select2 form-select',
-                    'id' => '',
-                    'onchange' => '
-                                                                                        $.get( "' . Url::toRoute('/courses/broker_contracts') . '", { id: $(this).val() } )
-                                                                                        .done(function( data ) {
-                                                                                           $(\'#broker_contracts\').html(data);
-                                                                                           $(\'.js-example-basic-single\').select2({
-                                                                                             placeholder: \'انتخاب\'
-                                                                                            });
-                                                                                        }
-                                                                                    );'
-                ]
-            )->label(false);
-            $brokers = ob_get_contents();
-            ob_end_clean();
-        }
-        if ($collegeTeachers != null) {
-            ob_start();
-            $model = new Courses();
-            $form = ActiveForm::begin(
-                [
-                    'action' => ['new'],
-                    'options' => [
-                        'enctype' => 'multipart/form-data',
-                        'name' => 'form2',
-                    ],
-
-                ]
-            );
-            echo $form->field($model, 'lessons[0][teachers]')->dropDownList(
-                ArrayHelper::map($collegeTeachers, function ($model) {
-                    return (string) $model->_id;
-                }, function ($model) {
-                    return $model->first_name . ' ' . $model->last_name;
-                }),
-                [
-                    'prompt' => 'لطفا مدرس را انتخاب کنید',
-                    'class' => 'select2 form-select',
-                    'id' => '',
-                    'required' => true
-                ]
-            )->label(false);
-            $teachers = ob_get_contents();
-            ob_end_clean();
-        }
-        if ($collegeLessons != null) {
-            ob_start();
-            $model = new Courses();
-            $form = ActiveForm::begin(
-                [
-                    'action' => ['new'],
-                    'options' => [
-                        'enctype' => 'multipart/form-data',
-                        'name' => 'form2',
-                    ],
-
-                ]
-            );
-            echo $form->field($model, 'lessons[0][_id]')->dropDownList(
-                ArrayHelper::map($collegeLessons, function ($model) {
-                    return (string) $model->_id;
-                }, function ($model) {
-                    return $model->title;
-                }),
-                [
-                    'prompt' => 'لطفا درس را انتخاب کنید',
-                    'class' => 'select2 form-select',
-                    'id' => '',
-                    'required' => true
-                ]
-            )->label(false);
-            $lessons = ob_get_contents();
-            ob_end_clean();
-        }
-        $response = array(
-            'brokers' => $brokers,
-            'teachers' => $teachers,
-            'lessons' => $lessons,
-        );
-        return json_encode($response);
+        return $this->actionBrokers1($id);
     }
 
+    /**
+     * HTML فیلدهای کارگزار/مدرس/درس برای یک واحد (صفحه‌ی ویرایش دوره از این قالب استفاده می‌کند).
+     */
     public function actionBrokers1($id)
     {
-        $hiddenArchive = array(
-            false => 'خیر' ,
-            true => 'بله' ,
-        );
-        $collegeBrokers = Brokers::find()->where(['college' => $id])->andWhere(['status' => '1'])->all();
-        if (Yii::$app->user->identity->role == 'broker')
-            $collegeBrokers = Brokers::find()->where(['college' => $id])->andWhere(['connector_info.mobile' => Yii::$app->user->identity->username])->andWhere(['status' => '1'])->all();
-        $collegeTeachers = Teachers::find()->where(['like', 'colleges', $id])->all();
-        $collegeLessons = Lessons::find()->where(['college' => $id])->all();
-        $brokers = null;
-        $teachers = null;
-        $lessons = null;
-        if ($collegeBrokers != null) {
-            ob_start();
-            $model = new Courses();
-            $form = ActiveForm::begin(
-                [
-                    'action' => ['new'],
-                    'options' => [
-                        'enctype' => 'multipart/form-data',
-                        'name' => 'form2',
-                    ],
-
-                ]
-            );
-            echo $form->field($model, 'broker[_id]')->dropDownList(
-                ArrayHelper::map($collegeBrokers, function ($model) {
-                    return (string) $model->_id;
-                }, function ($model) {
-                    $type = 'حقیقی';
-                    if ($model->type == '1')
-                        $type = 'حقیقی - شرکت ' . Html::encode($model->company_info['company_title']);
-                    return Html::encode($model->connector_info['first_name'] . ' ' . $model->connector_info['last_name']) . '(' . $type . ')';
-                }),
-                [
-                    'prompt' => 'لطفا کارگزار را انتخاب کنید',
-                    'class' => 'select2 form-select',
-                    'id' => '',
-                    'onchange' => '
-                                                                                        $.get( "' . Url::toRoute('/courses/broker_contracts') . '", { id: $(this).val() } )
-                                                                                        .done(function( data ) {
-                                                                                           $(\'#broker_contracts1\').html(data);
-                                                                                           $(\'.js-example-basic-single\').select2({
-                                                                                             placeholder: \'انتخاب\'
-                                                                                            });
-                                                                                        }
-                                                                                    );'
-                ]
-            )->label(false);
-            $brokers = ob_get_contents();
-            ob_end_clean();
-        }
-        if ($collegeTeachers != null) {
-            ob_start();
-            $model = new Courses();
-            $form = ActiveForm::begin(
-                [
-                    'action' => ['new'],
-                    'options' => [
-                        'enctype' => 'multipart/form-data',
-                        'name' => 'form2',
-                    ],
-
-                ]
-            );
-            echo $form->field($model, 'lessons[0][teachers]')->dropDownList(
-                ArrayHelper::map($collegeTeachers, function ($model) {
-                    return (string) $model->_id;
-                }, function ($model) {
-                    return Html::encode($model->first_name . ' ' . $model->last_name);
-                }),
-                [
-                    'prompt' => 'لطفا مدرس را انتخاب کنید',
-                    'class' => 'select2 form-select',
-                    'id' => '',
-                    "onChange" => "$('.submit-course-btn').attr('disabled', false)",
-                    'required' => true,
-                    'oninvalid' => 'this.setCustomValidity(\'لطفا مدرس را انتخاب کنید\')',
-                    'oninput' => 'setCustomValidity(\'\')',
-                ]
-            )->label(false);
-            $teachers = ob_get_contents();
-            ob_end_clean();
-        }
-        if ($collegeLessons != null) {
-            ob_start();
-            $model = new Courses();
-            $form = ActiveForm::begin(
-                [
-                    'action' => ['new'],
-                    'options' => [
-                        'enctype' => 'multipart/form-data',
-                        'name' => 'form2',
-                    ],
-
-                ]
-            );
-            echo $form->field($model, 'lessons[0][_id]')->dropDownList(
-                ArrayHelper::map($collegeLessons, function ($model) {
-                    return (string) $model->_id;
-                }, function ($model) {
-                    return Html::encode($model->title);
-                }),
-                [
-                    'prompt' => 'لطفا درس را انتخاب کنید',
-                    'class' => 'select2 form-select',
-                    'id' => 'lessons'.rand(),
-                    'required' => true,
-                    'oninvalid' => 'this.setCustomValidity(\'لطفا درس را انتخاب کنید\')',
-                    'oninput' => 'setCustomValidity(\'\')',
-                ]
-            )->label(false);
-            $lessons = ob_get_contents();
-            ob_end_clean();
-            ob_start();
-            $model = new Courses();
-            $form = ActiveForm::begin(
-                [
-                    'action' => ['new'],
-                    'options' => [
-                        'enctype' => 'multipart/form-data',
-                        'name' => 'form2',
-                    ],
-
-                ]
-            );
-            echo $form->field($model, 'lessons[0][hide_archive]')->dropDownList(
-                $hiddenArchive,
-                [
-                    'id' => '',
-                    'required' => true,
-                    'oninvalid' => 'this.setCustomValidity(\'لطفا وضعیت مخفی کردن آرشیو را مشخص کنید\')',
-                    'oninput' => 'setCustomValidity(\'\')',
-                ]
-            )->label(false);
-            $archive = ob_get_contents();
-            ob_end_clean();
-        }
-        $response = array(
-            'brokers' => $brokers,
-            'teachers' => $teachers,
-            'lessons' => $lessons,
-            'archive' => $archive,
-        );
-        return json_encode($response);
+        Yii::$app->response->format = Response::FORMAT_JSON;
+        $options = $this->actionUnitOptions($id);
+        Yii::$app->response->format = Response::FORMAT_JSON;
+        $select = function ($name, $items, $prompt, $required, $extra = '') {
+            if (empty($items))
+                return null;
+            $html = '<select name="' . Html::encode($name) . '" class="select2 form-select"' . ($required ? ' required' : '') . $extra . '>';
+            $html .= '<option value="">' . Html::encode($prompt) . '</option>';
+            foreach ($items as $item)
+                $html .= '<option value="' . Html::encode($item['id']) . '">' . Html::encode($item['name']) . '</option>';
+            return $html . '</select>';
+        };
+        $contractsUrl = Html::encode(Url::to(['broker_contracts']));
+        return [
+            'brokers' => $select('Courses[broker][_id]', $options['brokers'], 'لطفا کارگزار را انتخاب کنید', false,
+                ' onchange="$.get(\'' . $contractsUrl . '\', {id: this.value}).done(function (d) { $(\'#broker_contracts, #broker_contracts1\').html(d); });"'),
+            'teachers' => $select('Courses[lessons][0][teachers]', $options['teachers'], 'لطفا مدرس را انتخاب کنید', true),
+            'lessons' => $select('Courses[lessons][0][_id]', $options['lessons'], 'لطفا درس را انتخاب کنید', true),
+            'archive' => '<select name="Courses[lessons][0][hide_archive]" class="form-select" required><option value="0">خیر</option><option value="1">بله</option></select>',
+        ];
     }
 
     public function actionBroker_contracts($id)
     {
-        $broker = Brokers::findOne($id);
-        if ($broker != null) {
-            $model = new Courses();
-            $form = ActiveForm::begin(
-                [
-                    'action' => ['new'],
-                    'options' => [
-                        'enctype' => 'multipart/form-data',
-                    ],
-
-                ]
-            );
-            echo $form->field($model, 'broker[contract]')->dropDownList(
-                ArrayHelper::map($broker->contracts, 'id', function ($model) {
-                    return Html::encode($model['title']) . ' (' . $model['share'] . ' درصد)';
-                }),
-                [
-                    'prompt' => 'لطفا قرارداد کارگزار را انتخاب کنید',
-                    'class' => 'select2 form-select',
-                    'id' => '',
-                    'required' => true,
-                    'oninvalid' => 'this.setCustomValidity(\'لطفا قرارداد کارگزار را انتخاب کنید\')',
-                    'oninput' => 'setCustomValidity(\'\')',
-                ]
-            )->label(false);
+        $broker = is_string($id) && preg_match('/^[a-f0-9]{24}$/i', $id) ? Brokers::findOne($id) : null;
+        if ($broker === null)
+            return '';
+        $allowed = CourseAccess::isAdmin() || count(array_intersect(StudentAccess::normalizeColleges($broker->college), CourseAccess::units())) > 0;
+        if (CourseAccess::role() === 'broker') {
+            $own = CourseAccess::broker();
+            $allowed = $own !== null && (string) $own->_id === (string) $broker->_id;
         }
+        if (!$allowed)
+            return '';
+        $html = '<select name="Courses[broker][contract]" class="select2 form-select" required><option value="">لطفا قرارداد کارگزار را انتخاب کنید</option>';
+        foreach ((array) $broker->contracts as $contract)
+            if (is_array($contract) && isset($contract['id']))
+                $html .= '<option value="' . Html::encode($contract['id']) . '">' . Html::encode((isset($contract['title']) ? $contract['title'] : '') . (isset($contract['share']) ? ' (' . $contract['share'] . ' درصد)' : '')) . '</option>';
+        return $html . '</select>';
     }
 
     public function actionCapacity($id)
     {
-        if ($id == 2) {
-            $model = new Courses();
-            $form = ActiveForm::begin(
-                [
-                    'action' => ['new'],
-                    'options' => [
-                        'enctype' => 'multipart/form-data',
-                    ],
-
-                ]
-            );
-            echo '<label for="nameWithTitle" class="form-label">ظرفیت *</label>';
-            echo $form->field($model, 'student_capacity[number]')->textInput(
-                [
-
-                    'class' => 'form-control numeral-mask text-start',
-                    'required' => true,
-                    'type' => 'number',
-                    'oninvalid' => 'this.setCustomValidity(\'لطفا ظرفیت دوره را وارد کنید\')',
-                    'oninput' => 'setCustomValidity(\'\')',
-                ]
-            )->label(false);
-        }
+        if ((string) $id !== Courses::CAPACITY_TYPE_LIMITED)
+            return '';
+        return '<label class="form-label">ظرفیت *</label><input type="number" min="1" step="1" name="Courses[student_capacity][number]" class="form-control text-start" required data-input="digits">';
     }
 
     public function actionCourse_date($id)
     {
-        if ($id == 3) {
-            $response = array(
-                'from' => "<div></div>",
-                'to' => "<div></div>",
-                'time' => "<div></div>"
-            );
-            return json_encode($response);
-        }
-
-
-        ob_start();
-        $model = new Courses();
-        $form = ActiveForm::begin(
-            [
-                'action' => ['new'],
-                'options' => [
-                    'enctype' => 'multipart/form-data',
-                ],
-
-            ]
-        );
-        echo '<label for="nameWithTitle" class="form-label">تاریخ شروع دوره *</label>';
-        echo  $form->field($model, 'lessons[0][date][from]')->textInput(
-            [
-                'class' => 'form-control dob-picker text-start',
-                'required' => true,
-                'oninvalid' => 'this.setCustomValidity(\'لطفا تاریخ شروع دوره را وارد کنید\')',
-                'oninput' => 'setCustomValidity(\'\')',
-            ]
-        )->label(false);
-        $from = ob_get_contents();
-        ob_end_clean();
-        ob_start();
-        $model = new Courses();
-        $form = ActiveForm::begin(
-            [
-                'action' => ['new'],
-                'options' => [
-                    'enctype' => 'multipart/form-data',
-                ],
-
-            ]
-        );
-        echo '<label for="nameWithTitle" class="form-label">تاریخ اتمام دوره *</label>';
-        echo  $form->field($model, 'lessons[0][date][to]')->textInput(
-            [
-                'class' => 'form-control dob-picker text-start',
-                'required' => true,
-                'oninvalid' => 'this.setCustomValidity(\'لطفا تاریخ اتمام دوره را وارد کنید\')',
-                'oninput' => 'setCustomValidity(\'\')',
-            ]
-        )->label(false);
-        $to = ob_get_contents();
-        ob_end_clean();
-        ob_start();
-        $model = new Courses();
-        $form = ActiveForm::begin(
-            [
-                'action' => ['new'],
-                'options' => [
-                    'enctype' => 'multipart/form-data',
-                ],
-
-            ]
-        );
-        echo '<label for="nameWithTitle" class="form-label">ساعت شروع دوره *</label>';
-        echo  $form->field($model, 'lessons[0][date][time]')->textInput(
-            [
-                'class' => 'form-control text-start',
-                'required' => true,
-                'oninvalid' => 'this.setCustomValidity(\'لطفا ساعت شروع دوره را وارد کنید\')',
-                'oninput' => 'setCustomValidity(\'\')',
-            ]
-        )->label(false);
-        $time = ob_get_contents();
-        ob_end_clean();
-        $response = array(
-            'from' => $from,
-            'to' => $to,
-            'time' => $time
-        );
-        return json_encode($response);
+        Yii::$app->response->format = Response::FORMAT_JSON;
+        if ((string) $id === '3')
+            return ['from' => '<div></div>', 'to' => '<div></div>', 'time' => '<div></div>'];
+        return [
+            'from' => '<label class="form-label">تاریخ شروع دوره *</label><input type="text" name="Courses[lessons][0][date][from]" class="form-control dob-picker text-start" required>',
+            'to' => '<label class="form-label">تاریخ اتمام دوره *</label><input type="text" name="Courses[lessons][0][date][to]" class="form-control dob-picker text-start" required>',
+            'time' => '<label class="form-label">ساعت شروع دوره *</label><input type="text" name="Courses[lessons][0][date][time]" class="form-control text-start" required>',
+        ];
     }
 
-    public function actionReport()
+    /**
+     * بررسی وجود نام کاربری هنگام افزودن عضو (فقط نام و نام خانوادگی برگردانده می‌شود).
+     */
+    public function actionCheckUsername()
     {
-        date_default_timezone_set('Asia/Tehran');
-        require_once(Yii::$app->basePath . '/web/jdf.php');
-        Yii::$app->setTimeZone('Asia/Tehran');
-        $searchModel = new CoursesSearch();
-        $dataProvider = $searchModel->search(Yii::$app->request->queryParams, '1');
-        $exporter = new Spreadsheet([
-            'dataProvider' => $dataProvider,
-            'columns' => [
-                [
-                    'attribute' => function ($model) {
-                        return $model->title['main_fa'];
-                    },
-                    'header' => 'عنوان اصلی فارسی'
-                ],
-                [
-                    'attribute' => function ($model) {
-                        return $model->title['main_en'];
-                    },
-                    'header' => 'عنوان اصلی انگلیسی'
-                ],
-                [
-                    'attribute' => function ($model) {
-                        return $model->title['degree_fa'];
-                    },
-                    'header' => 'عنوان فارسی داخل مدرک'
-                ],
-                [
-                    'attribute' => function ($model) {
-                        return $model->title['degree_en'];
-                    },
-                    'header' => 'عنوان انگلیسی داخل مدرک'
-                ],
-                [
-                    'attribute' => function($model){
-                        if($model->status == 0)
-                            return 'تائید شده - غیرفعال';
-                        else if($model->status == 1)
-                            return 'تائید شده - فعال';
-                        else if($model->status == 2)
-                            return 'در انتظار تائید';
-                        else if($model->status == 3)
-                            return 'پیش نویس';
-                        else if($model->status == 4)
-                            return 'نیار به اصلاح';
-                        else if($model->status == 5)
-                            return 'رد شده';
-                        else if($model->status == 6)
-                            return 'پایان یافته';
-                    },
-                    'header' => 'وضعیت دوره'
-                ],
-                [
-                    'attribute' => function($model)
-                    {
-                        if($model->license_code != null && $model->license_code != '')
-                            return $model->license_code;
-                        else
-                            return '-';
-                    },
-                    'header' => 'کد مجوز'
-                ],
-                [
-                    'attribute' => function ($model) {
-                        return number_format($model->price);
-                    },
-                    'header' => 'قیمت اصلی (تومان)'
-                ],
-                [
-                    'attribute' => function ($model) {
-                        return number_format($model->discount_price);
-                    },
-                    'header' => 'قیمت با تخفیف (تومان)'
-                ],
-                [
-                    'attribute' => function ($model) {
-                        return $model->duration;
-                    },
-                    'header' => 'مدت زمان دوره (ساعت)'
-                ],
-                [
-                    'attribute' => function ($model) {
-                        if ($model->student_capacity['type'] == '1')
-                            return 'نامحدود';
-                        else if ($model->student_capacity['type'] == '2')
-                        {
-                            if(isset($model->student_capacity['number']))
-                                return $model->student_capacity['number'] . ' نفر';
-                            else
-                                return '-';
-                        }
-                        else
-                            return 'سازمانی';
-                    },
-                    'header' => 'ظرفیت دوره'
-                ],
-                [
-                    'attribute' => function($model){
-                        if($model->content_type == '1')
-                            return 'غیر حضوری';
-                        else if($model->content_type == '2')
-                            return 'نیمه حضوری';
-                        else if($model->content_type == '3')
-                            return 'محتوا محور';
-                        else
-                            return 'حضوری';
-                    },
-                    'header' => 'نوع دوره'
-                ],
-                [
-                    'attribute' => function ($model) {
-                        if($model->lessons != null)
-                        {
-                            if(array_key_exists('date', $model->lessons[0]))
-                            {
-                                if(array_key_exists('from', $model->lessons[0]['date']))
-                                    return $model->lessons[0]['date']['from'];
-                            }
-                            else
-                                return '-';
-                        }
-                        else
-                            return '-';
-                    },
-                    'header' => 'تاریخ شروع دوره'
-                ],
-                [
-                    'attribute' => function ($model) {
-                        if($model->lessons != null)
-                        {
-                            if(array_key_exists('date', $model->lessons[0]))
-                            {
-                                if(array_key_exists('to', $model->lessons[0]['date']))
-                                    return $model->lessons[0]['date']['to'];
-                            }
-                            else
-                                return '-';
-                        }
-                        else
-                            return '-';
-                    },
-                    'header' => 'تاریخ اتمام دوره'
-                ],
-                [
-                    'attribute' => function ($model) {
-                        if($model->lessons != null)
-                        {
-                            if(array_key_exists('date', $model->lessons[0]))
-                            {
-                                if(array_key_exists('time', $model->lessons[0]['date']))
-                                    return $model->lessons[0]['date']['time'];
-                            }
-                            else
-                                return '-';
-                        }
-                        else
-                            return '-';
-                    },
-                    'header' => 'ساعت شروع دوره'
-                ],
-                [
-                    'attribute' => function ($model) {
-                        return $model->description;
-                    },
-                    'header' => 'توضیحات دوره'
-                ],
-                [
-                    'attribute' => function ($model) {
-                        $college = Colleges::findOne($model->college);
-                        if ($college != null)
-                            return $college->title;
-                        else
-                            return 'خطا';
-                    },
-                    'header' => 'دانشکده'
-                ],
-                [
-                    'attribute' => function ($model) {
-                        if ($model->broker != null) {
-                            if ($model->broker['_id'] != null && $model->broker['contract'] != null) {
-                                $broker = Brokers::findOne($model->broker['_id']);
-                                if ($broker != null) {
-                                    $brokerContract = 'قرارداد یاقت نشد';
-                                    foreach ($broker->contracts as $contract) {
-                                        if ($contract['id'] == $model->broker['contract'])
-                                            $brokerContract = 'قرارداد با عنوان ' . $contract['title'] . ' و سهم ' . $contract['share'] . ' درصدی';
-                                    }
-                                    return $broker->connector_info['first_name'] . ' ' . $broker->connector_info['last_name'] . ' - ' . $brokerContract;
-                                } else
-                                    return 'خطا';
-                            } else
-                                return '-';
-                        } else
-                            return '-';
-                    },
-                    'header' => 'کارگزار'
-                ],
-                [
-                    'attribute' => function ($model)
-                    {
-                        $lesson = null;
-                        $teacher = null;
-                        $lessonTitle = '*';
-                        $teacherTitle = '*';
-                        if($model->lessons != null)
-                            if(array_key_exists('_id', $model->lessons[0]))
-                                $lesson = Lessons::findOne($model->lessons[0]['_id']);
-                        if($model->lessons != null)
-                            if(array_key_exists('teachers', $model->lessons[0]))
-                                $teacher = Teachers::findOne($model->lessons[0]['teachers']);
-                        if($lesson != null)
-                            $lessonTitle = $lesson->title;
-                        if($teacher != null)
-                            $teacherTitle = $teacher->first_name . ' ' . $teacher->last_name;
-                        return $lessonTitle . ' - مدرس: ' . $teacherTitle;
-                    },
-                    'header' => 'درس دوره'
-                ],
-            ],
-        ]);
-        $exporter->save('./newfile.xlsx');
-        $file_name = 'SingleLessonCourses-' . jdate('Y/m/d-H:i:s') . '.xlsx';
-        return Yii::$app->response->sendFile('./newfile.xlsx', $file_name);
+        Yii::$app->response->format = Response::FORMAT_JSON;
+        $username = Yii::$app->request->post('username');
+        if (!is_string($username) || trim($username) === '')
+            return ['success' => false, 'message' => 'نام کاربری ارسال نشده است'];
+        $user = Users::find()->select(['first_name', 'last_name'])->where(['username' => mb_strtolower(trim($username), 'UTF-8')])->asArray()->one();
+        if ($user === null)
+            return ['success' => true, 'exists' => false];
+        return ['success' => true, 'exists' => true, 'userInfo' => [
+            'first_name' => isset($user['first_name']) && is_scalar($user['first_name']) ? (string) $user['first_name'] : '',
+            'last_name' => isset($user['last_name']) && is_scalar($user['last_name']) ? (string) $user['last_name'] : '',
+        ]];
     }
+
+    // ============================================== متدهای کمکی که ویوها صدا می‌زنند
 
     public function my_brokers($college)
     {
+        if (!CourseAccess::isAdmin() && !in_array((string) $college, CourseAccess::units(), true))
+            return null;
         $brokers = Brokers::find()->where(['college' => (string) $college])->all();
-        if ($brokers != null)
-            return $brokers;
-        else
-            return  null;
+        return $brokers ?: null;
     }
 
     public function my_broker_contract($_id)
     {
-        $broker = Brokers::findOne($_id);
-        if ($broker != null)
-            return $broker->contracts;
-        else
-            return null;
+        $broker = is_string($_id) && preg_match('/^[a-f0-9]{24}$/i', $_id) ? Brokers::findOne($_id) : null;
+        return $broker !== null ? $broker->contracts : null;
     }
 
     public function my_courses($college)
     {
-        return Lessons::find()->where(['college' => $college])->all();
+        return Lessons::find()->where(['college' => (string) $college])->all();
     }
 
     public function my_teachers($college)
     {
-//        return Teachers::find()->where(['like', 'colleges', $college])->all();
         return Teachers::find()->all();
     }
 
@@ -1207,230 +763,200 @@ class CoursesController extends Controller
 
     public function lesson_contents($courseId, $lessonId)
     {
-        return CoursesContents::find()->where(['course_id' => $courseId])->andWhere(['lesson_id' => $lessonId])->all();
-    }
-
-    public function actionMembers_report()
-    {
-        date_default_timezone_set('Asia/Tehran');
-        require_once(Yii::$app->basePath . '/web/jdf.php');
-        Yii::$app->setTimeZone('Asia/Tehran');
-        $searchModel = new CoursesMembers();
-        $dataProvider = $searchModel->search(Yii::$app->request->queryParams, Yii::$app->request->get('_id'));
-        $exporter = new Spreadsheet([
-            'dataProvider' => $dataProvider,
-            'columns' => [
-                [
-                    'attribute' => 'first_name',
-                    'header' => 'نام'
-                ],
-                [
-                    'attribute' => 'last_name',
-                    'header' => 'نام خانوادگی'
-                ],
-                [
-                    'attribute' => 'username',
-                    'header' => 'نام کاربری'
-                ],
-                [
-                    'attribute' => function ($model) {
-                        $memberCourse = null;
-                        if ($model->courses != null)
-                            foreach ($model->courses as $course)
-                                if ($course['_id'] == Yii::$app->request->get('_id'))
-                                    $memberCourse = $course;
-                        $registrant = 'نامشخص';
-                        if (array_key_exists('registrant', $memberCourse)) {
-                            if ($memberCourse['registrant'] == Yii::getAlias('@adminUsername'))
-                                $registrant = 'مدیریت';
-                            else if ($memberCourse['registrant'] == $model->username)
-                                $registrant = 'کاربر';
-                            else {
-                                $registrantDetail = DashboardController::registrant_detail($memberCourse['registrant']);
-                                $role = '';
-                                if ($registrantDetail->role == 'emp')
-                                    $role = 'کارشناس دانشکده';
-                                else if ($registrantDetail->role == 'broker')
-                                    $role = 'کارگزار';
-                                $registrant = $registrantDetail->first_name . ' ' . $registrantDetail->last_name . '(' . $role . ')';
-                            }
-                        }
-                        return $registrant;
-                    },
-                    'header' => 'ثبت کننده'
-                ],
-                [
-                    'attribute' => function ($model) {
-                        $memberCourse = null;
-                        if ($model->courses != null)
-                            foreach ($model->courses as $course)
-                                if ($course['_id'] == Yii::$app->request->get('_id'))
-                                    $memberCourse = $course;
-                        $status = 'نامشخص';
-                        if ($memberCourse != null) {
-                            if ($memberCourse['status'] == '0')
-                                $status = 'خطا در ثبت در ادوبی';
-                            else if ($memberCourse['status'] == '1')
-                                $status = 'فعال';
-                            else if ($memberCourse['status'] == '2')
-                                $status = 'غیرفعال';
-                        }
-                        return $status;
-                    },
-                    'header' => 'وضعیت'
-                ],
-            ],
-        ]);
-        $exporter->save('./newfile.xlsx');
-        $file_name = 'CourseMembers-' . jdate('Y/m/d-H:i:s') . '.xlsx';
-        return Yii::$app->response->sendFile('./newfile.xlsx', $file_name);
-    }
-
-    public function actionShow_course_users()
-    {
-        if(isset($_POST['id']))
-        {
-            $course = Courses::findOne($_POST['id']);
-            if($course != null)
-            {
-                $users = Users::find()->where(['courses._id' => (string) $course->_id])->all();
-                if($users != null)
-                {
-                    $response = array(
-                        'title' => 'حذف دوره '.$course->title['main_fa'],
-                        'body' => 'به دلیل اینکه دوره '.$course->title['main_fa'].' دارای دانشپذیر می باشد قابل حذف نیست',
-                        'submit' => null
-                    );
-                }
-                else
-                {
-                    ob_start();
-                    $form = ActiveForm::begin(
-                        [
-                            'action' => ['delete_course'],
-                            "method" => "post",
-                        ]
-                    );
-                    echo '<input type="hidden" name="_id" value="'.(string) $course->_id.'">';
-                    echo '<button type="submit" class="btn btn-label-danger">بله مطمئنم</button>';
-                    ActiveForm::end();
-                    $submit = ob_get_contents();
-                    ob_end_clean();
-                    $response = array(
-                        'title' => 'حذف دوره '.$course->title['main_fa'],
-                        'body' => 'آیا از حذف دوره '.$course->title['main_fa'].' مطمئن هستید؟',
-                        'submit' => $submit
-                    );
-                }
-                return json_encode($response);
-            }
-            else
-                return false;
-        }
-        else
-            return false;
-    }
-
-    public function actionDelete_course()
-    {
-        if(Yii::$app->request->isPost)
-        {
-            $course = Courses::findOne(Yii::$app->request->post('_id'));
-            if($course != null)
-            {
-                if($course->delete())
-                    Yii::$app->session->setFlash('status','10');
-                else
-                    Yii::$app->session->setFlash('status','2');
-            }
-        }
-        return $this->redirect(Yii::$app->request->referrer);
+        return CoursesContents::find()->where(['course_id' => (string) $courseId, 'lesson_id' => (string) $lessonId])->all();
     }
 
     public function score_status($courseId, $userId)
     {
-        $score = Scores::find()->where(['course_id' => $courseId])->andWhere(['user_id' => $userId])->one();
-        if($score != null)
-            return '
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path opacity="0.5" d="M22 12C22 17.5228 17.5228 22 12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C17.5228 2 22 6.47715 22 12Z" fill="green"/>
-<path d="M16.0303 8.96967C16.3232 9.26256 16.3232 9.73744 16.0303 10.0303L11.0303 15.0303C10.7374 15.3232 10.2626 15.3232 9.96967 15.0303L7.96967 13.0303C7.67678 12.7374 7.67678 12.2626 7.96967 11.9697C8.26256 11.6768 8.73744 11.6768 9.03033 11.9697L10.5 13.4393L12.7348 11.2045L14.9697 8.96967C15.2626 8.67678 15.7374 8.67678 16.0303 8.96967Z" fill="green"/>
-</svg>
-
-            ';
-        else
-            return '
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-<path opacity="0.5" d="M22 12C22 17.5228 17.5228 22 12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2C17.5228 2 22 6.47715 22 12Z" fill="red"/>
-<path d="M8.96967 8.96967C9.26256 8.67678 9.73744 8.67678 10.0303 8.96967L12 10.9394L13.9697 8.96969C14.2626 8.6768 14.7374 8.6768 15.0303 8.96969C15.3232 9.26258 15.3232 9.73746 15.0303 10.0304L13.0607 12L15.0303 13.9696C15.3232 14.2625 15.3232 14.7374 15.0303 15.0303C14.7374 15.3232 14.2625 15.3232 13.9696 15.0303L12 13.0607L10.0304 15.0303C9.73746 15.3232 9.26258 15.3232 8.96969 15.0303C8.6768 14.7374 8.6768 14.2626 8.96969 13.9697L10.9394 12L8.96967 10.0303C8.67678 9.73744 8.67678 9.26256 8.96967 8.96967Z" fill="red"/>
-</svg>
-
-            ';
+        $has = Scores::find()->where(['course_id' => (string) $courseId, 'user_id' => (string) $userId])->exists();
+        return '<i class="bx ' . ($has ? 'bx-check-circle text-success' : 'bx-x-circle text-danger') . '" style="font-size:1.4rem"></i>';
     }
 
     public function allow($college)
     {
-        $allow = false;
-        if(Yii::$app->user->identity->role == 'user' || Yii::$app->user->identity->role == 'cnt')
-            $allow = true;
-        else
-        {
-            if(is_array(Yii::$app->user->identity->college))
-            {
-                if(array_search($college, Yii::$app->user->identity->college) !== false)
-                    $allow = true;
-            }
-            else if($college == Yii::$app->user->identity->college)
-                $allow = true;
-        }
-        return $allow;
+        return CourseAccess::isAdmin() || in_array((string) $college, CourseAccess::units(), true);
     }
 
+    /**
+     * آیا هنوز در مهلت ثبت عضو (یک‌چهارم اول دوره) هستیم. خروجی JSON برای سازگاری با ویو.
+     */
     public function check_date($startDateJalali, $endDateJalali)
     {
-        $allowDeadlineDate = true;
-        $startDateGregorian = $this->jalaliToGregorian($startDateJalali);
-        $endDateGregorian = $this->jalaliToGregorian($endDateJalali);
-        // محاسبه فاصله بین دو تاریخ به ثانیه
-        $startTimestamp = strtotime($startDateGregorian);
-        $endTimestamp = strtotime($endDateGregorian);
-        $intervalSeconds = $endTimestamp - $startTimestamp;
-
-// محاسبه یک‌چهارم فاصله (به ثانیه)
-        $quarterIntervalSeconds = $intervalSeconds / 4;
-
-// تاریخ امروز به شمسی
-        $todayJalali = jdate('Y/m/d'); // با استفاده از jdf
-        $todayGregorian = $this->jalaliToGregorian($todayJalali);
-        $todayTimestamp = strtotime($todayGregorian);
-        // تاریخ مهلت: تاریخ شروع + یک‌چهارم فاصله
-        $deadlineTimestamp = $startTimestamp + $quarterIntervalSeconds;
-
-// بررسی: اگر امروز از تاریخ مهلت بزرگتر باشد
-        $allowDeadlineDate = ($todayTimestamp <= $deadlineTimestamp);
-        $ret = array(
-            'allowDeadlineDate' => $allowDeadlineDate,
-            'deadlineTimestamp' => $deadlineTimestamp
-        );
-        return json_encode($ret);
+        $start = ShortCourseForm::toTimestamp($startDateJalali);
+        $end = ShortCourseForm::toTimestamp($endDateJalali);
+        if ($start === null || $end === null)
+            return json_encode(['allowDeadlineDate' => true, 'deadlineTimestamp' => null]);
+        $deadline = $start + ($end - $start) / 4;
+        return json_encode(['allowDeadlineDate' => time() <= $deadline + 86399, 'deadlineTimestamp' => $deadline]);
     }
-    function jalaliToGregorian($jalaliDate) {
-        // جدا کردن و بررسی اولیه
-        $parts = explode('-', $jalaliDate);
 
-        if (count($parts) !== 3) {
-            // اگر با - جدا نشد، با / امتحان کن
-            $parts = explode('/', $jalaliDate);
-            if (count($parts) !== 3) {
-                die('فرمت تاریخ اشتباه است. باید Y-m-d یا Y/m/d باشد');
-            }
+    // ================================================================== کمکی
+
+    /**
+     * کد مجوز = کد واحد + شمارنده‌ی سراسری (اتمیک).
+     */
+    private function assignLicenseCode(Courses $model)
+    {
+        $unit = Colleges::findOne($model->college);
+        if ($unit === null || !is_scalar($unit->prefix) || (string) $unit->prefix === '')
+            return false;
+        $doc = Yii::$app->mongodb->getCollection(['eec', 'generals'])
+            ->findAndModify(['type' => 'license_code'], ['$inc' => ['data' => 1]], ['new' => true]);
+        if (!isset($doc['data']))
+            return false;
+        $model->license_code = $unit->prefix . '-' . (int) $doc['data'];
+        return true;
+    }
+
+    private function selectableUnits()
+    {
+        $titles = UsersDirectory::collegeTitles();
+        if (CourseAccess::isAdmin())
+            return $titles;
+        $result = [];
+        foreach (CourseAccess::units() as $id)
+            if (isset($titles[$id]))
+                $result[$id] = $titles[$id];
+        return $result;
+    }
+
+    /**
+     * واحدهای قابل انتخاب در فرم ثبت دوره: مدیر سیستم همه؛ بقیه فقط واحد خودشان.
+     */
+    private function creatableUnits()
+    {
+        $titles = UsersDirectory::collegeTitles();
+        if (CourseAccess::canChooseUnit())
+            return $titles;
+        $result = [];
+        foreach (CourseAccess::ownUnits() as $id)
+            if (isset($titles[$id]))
+                $result[$id] = $titles[$id];
+        return $result;
+    }
+
+    private function selectableBrokers()
+    {
+        $query = Brokers::find()->select(['connector_info', 'company_info', 'type'])->orderBy(['_id' => SORT_DESC]);
+        if (CourseAccess::role() === 'broker')
+            return [];
+        if (!CourseAccess::isAdmin()) {
+            $units = CourseAccess::units();
+            $query->where(empty($units) ? ['_id' => null] : ['college' => $units]);
         }
-
-        list($jY, $jM, $jD) = $parts;
-
-        // تبدیل
-        $gregorian = jalali_to_gregorian($jY, $jM, $jD);
-        return implode('-', $gregorian) . ' 00:00:00';
+        $result = [];
+        foreach ($query->all() as $broker) {
+            $ci = is_array($broker->connector_info) ? $broker->connector_info : [];
+            $result[(string) $broker->_id] = trim((isset($ci['first_name']) ? $ci['first_name'] : '') . ' ' . (isset($ci['last_name']) ? $ci['last_name'] : ''));
+        }
+        return $result;
     }
 
+    private function selectableTeachers()
+    {
+        $query = Teachers::find()->select(['first_name', 'last_name'])->orderBy(['last_name' => SORT_ASC]);
+        if (!CourseAccess::isAdmin()) {
+            $units = CourseAccess::units();
+            $query->where(empty($units) ? ['_id' => null] : ['colleges' => $units]);
+        }
+        $result = [];
+        foreach ($query->all() as $teacher)
+            $result[(string) $teacher->_id] = trim($teacher->first_name . ' ' . $teacher->last_name);
+        return $result;
+    }
+
+    /**
+     * گزینه‌های «نوع ظرفیت» (بند ۶ صورتجلسه: «نامحدود» حذف). ظرفیت محدود فقط وقتی شناسه‌ی حساب واحد ثبت شده باشد.
+     */
+    private function capacityTypes()
+    {
+        $types = ['2' => 'محدود', '3' => 'سازمانی'];
+        if (CourseAccess::isAdmin())
+            return $types;
+        foreach (CourseAccess::units() as $id) {
+            $unit = Colleges::findOne($id);
+            if ($unit !== null && is_array($unit->financial_info) && !empty($unit->financial_info['id']))
+                return $types;
+        }
+        return ['3' => 'سازمانی'];
+    }
+
+    private function namesById($class, array $ids, $field = null)
+    {
+        $ids = array_values(array_unique(array_filter($ids, function ($id) {
+            return is_string($id) && preg_match('/^[a-f0-9]{24}$/i', $id);
+        })));
+        if (empty($ids))
+            return [];
+        $result = [];
+        foreach ($class::find()->where(['_id' => $ids])->all() as $model)
+            $result[(string) $model->_id] = $field !== null ? (string) $model->$field : trim($model->first_name . ' ' . $model->last_name);
+        return $result;
+    }
+
+    private function brokerNames(array $ids)
+    {
+        $ids = array_values(array_unique(array_filter($ids, function ($id) {
+            return is_string($id) && preg_match('/^[a-f0-9]{24}$/i', $id);
+        })));
+        if (empty($ids))
+            return [];
+        $result = [];
+        foreach (Brokers::find()->select(['connector_info'])->where(['_id' => $ids])->asArray()->all() as $broker) {
+            $ci = isset($broker['connector_info']) && is_array($broker['connector_info']) ? $broker['connector_info'] : [];
+            $result[(string) $broker['_id']] = trim((isset($ci['first_name']) ? $ci['first_name'] : '') . ' ' . (isset($ci['last_name']) ? $ci['last_name'] : ''));
+        }
+        return $result;
+    }
+
+    private function memberCounts(array $courseIds)
+    {
+        if (empty($courseIds))
+            return [];
+        $result = [];
+        foreach (Users::getCollection()->aggregate([
+            ['$match' => ['courses._id' => ['$in' => $courseIds]]],
+            ['$project' => ['courses._id' => 1]],
+            ['$unwind' => '$courses'],
+            ['$match' => ['courses._id' => ['$in' => $courseIds]]],
+            ['$group' => ['_id' => '$courses._id', 'count' => ['$sum' => 1]]],
+        ]) as $row)
+            $result[(string) $row['_id']] = (int) $row['count'];
+        return $result;
+    }
+
+    private function sendXlsx(XlsxWriter $writer, $name)
+    {
+        $path = Yii::getAlias('@runtime') . '/' . $name . '-' . bin2hex(random_bytes(6)) . '.xlsx';
+        $writer->save($path);
+        $response = Yii::$app->response->sendFile($path, $name . '-' . UsersDirectory::jdate('Y-m-d-H-i', time(), 'en') . '.xlsx');
+        $response->on(Response::EVENT_AFTER_SEND, function () use ($path) {
+            @unlink($path);
+        });
+        return $response;
+    }
+
+    /**
+     * @return Courses|null فقط دوره‌ی کوتاه‌مدت با شناسه‌ی معتبر
+     */
+    private function findCourse($id)
+    {
+        if (!is_string($id) || !preg_match('/^[a-f0-9]{24}$/i', $id))
+            return null;
+        $course = Courses::findOne($id);
+        return $course !== null && (string) $course->type === ShortCoursesSearch::TYPE ? $course : null;
+    }
+
+    private function firstError($model)
+    {
+        foreach ($model->getFirstErrors() as $error)
+            return $error;
+        return 'اطلاعات وارد شده معتبر نیست';
+    }
+
+    private function back($type, $message, $url = null)
+    {
+        Yii::$app->session->setFlash(self::FLASH, ['type' => $type, 'message' => $message]);
+        return $this->redirect($url !== null ? $url : SafeRedirect::referrer(['index']));
+    }
 }

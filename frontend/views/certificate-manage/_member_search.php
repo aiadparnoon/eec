@@ -64,40 +64,57 @@ $roles = array(
         ?>
         <button class="btn btn-info" style="margin-right: 5px;" type="submit">جستجو</button>
         <?php ActiveForm::end(); ?>
-        <?php
-        if(Yii::$app->user->identity->role == 'user' || Yii::$app->user->identity->role == 'cnt')
-        {
-            $targetTimestamp = strtotime('2026-03-21 00:00:00');
-
-            $type = (string)$packageDetail->type;
-            $courseDate = null;
-            if ($type === '1') {
-                $courseDate = $packageDetail->lessons[0]->date['from'] ?? null;
-            } elseif ($type === '2') {
-                $courseDate = $packageDetail->date['from'] ?? null;
-            }
-            $docTimestamp = null;
-
-            if ($courseDate)
-            {
-                list($year, $month, $day) = explode('-', $courseDate);
-                $docTimestamp = jmktime(0, 0, 0, (int)$month, (int)$day, (int)$year,1);
-            }
-
-
-            if ($docTimestamp !== null && $docTimestamp >= $targetTimestamp) {
-                ?>
-                <a href="<?= Yii::$app->urlManager->createAbsoluteUrl(['certificate-manage/new-print-all-certificate', '_id' => (string) $packageDetail->_id]) ?>" class="btn btn-info" style="margin-right: 5px;" type="submit">پرینت تمامی درخواست ها</a>
+        <div>
+            <div class="btn-group" role="group" aria-label="Basic example">
                 <?php
-            }
-            else
-            {
+                if(Yii::$app->user->identity->role == 'user' || Yii::$app->user->identity->role == 'cnt')
+                {
+                    $targetTimestamp = strtotime('2026-03-21 00:00:00');
+
+                    $type = (string)$packageDetail->type;
+                    $courseDate = null;
+                    if ($type === '1') {
+                        $courseDate = $packageDetail->lessons[0]['date']['from'] ?? null;
+                    } elseif ($type === '2') {
+                        $courseDate = $packageDetail->date['from'] ?? null;
+                    }
+                    $docTimestamp = null;
+
+                    if ($courseDate)
+                    {
+                        list($year, $month, $day) = explode('-', $courseDate);
+                        $docTimestamp = jmktime(0, 0, 0, (int)$month, (int)$day, (int)$year,1);
+                    }
+
+
+                    if ($docTimestamp !== null && $docTimestamp >= $targetTimestamp) {
+                        ?>
+                        <a href="<?= Yii::$app->urlManager->createAbsoluteUrl(['certificate-manage/new-print-all-certificate', '_id' => (string) $packageDetail->_id]) ?>" class="btn btn-info" style="margin-right: 5px;" type="submit">چاپ تمام درخواست ها</a>
+                        <?php
+                    }
+                    else
+                    {
+                        ?>
+                        <a href="<?= Yii::$app->urlManager->createAbsoluteUrl(['certificate-manage/print-all-certificate', '_id' => (string) $packageDetail->_id]) ?>" class="btn btn-info" style="margin-right: 5px;" type="submit">چاپ تمام درخواست ها</a>
+                        <?php
+                    }
+                }
                 ?>
-                <a href="<?= Yii::$app->urlManager->createAbsoluteUrl(['certificate-manage/print-all-certificate', '_id' => (string) $packageDetail->_id]) ?>" class="btn btn-info" style="margin-right: 5px;" type="submit">پرینت تمامی درخواست ها</a>
                 <?php
-            }
-        }
-        ?>
+                if(Yii::$app->user->identity->role == 'user')
+                {
+                    $digitalCert = false;
+                    if($packageDetail->digital_cert != null)
+                        if($packageDetail->digital_cert == true)
+                            $digitalCert = true;
+                    if($digitalCert)
+                        echo '<button type="button" class="btn btn-success" data-bs-toggle="modal" data-bs-target="#basicModal">گواهی دیجیتال: فعال</button>';
+                    else
+                        echo '<button type="button" class="btn btn-danger" data-bs-toggle="modal" data-bs-target="#basicModal">گواهی دیجیتال: غیرفعال</button>';
+                }
+                ?>
+            </div>
+        </div>
         <div class="collapse navbar-collapse" id="navbar-ex-4">
             <div class="navbar-nav me-auto">
                 <a class="nav-item nav-link active" href="javascript:void(0)"></a>
@@ -143,3 +160,40 @@ $roles = array(
         </div>
     </div>
 </nav>
+
+
+<div class="modal fade" id="basicModal" tabindex="-1" style="display: none;" aria-hidden="true">
+    <div class="modal-dialog" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title secondary-font" id="exampleModalLabel1">تغییر گواهی دیجیتال</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <?php $form = ActiveForm::begin([
+                    'action'=>['certificate-manage/change_digital_cert'],
+                    'method'=>'post',
+                    'options' => [
+                        'class' => 'd-flex',
+                    ],
+                    'fieldConfig' => [
+                        'options' => [
+                            'tag' => false,
+                        ],
+                    ],
+                ]);
+                echo $form->field($packageDetail, '_id')->hiddenInput()->label(false);
+                ?>
+
+                آیا از تغییر صدور گواهی دیجیتال مطمئن هستید؟
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">
+                    بستن
+                </button>
+                <button type="submit" class="btn btn-primary">بله مطمئنم</button>
+                <?php ActiveForm::end(); ?>
+            </div>
+        </div>
+    </div>
+</div>

@@ -3,19 +3,35 @@
 namespace app\components\classroom;
 
 use Yii;
+use app\models\ClassroomServers;
 use app\models\CourseSessions;
 use app\models\Lessons;
 use app\models\Principals;
 use common\models\Admin;
 
 /**
- * Adobe Connect از طریق وب‌سرویس داخلی @baseUrl (api-eec).
- * همه‌ی فراخوانی‌ها timeout دارند و در صورت خطا false برمی‌گردانند (نه خطای PHP).
+ * Adobe Connect از طریق وب‌سرویس واسط (api-eec) که آدرسش در تنظیمات سرور ذخیره شده است
+ * (پیش‌فرض: @baseUrl). همه‌ی فراخوانی‌ها timeout دارند و در صورت خطا false برمی‌گردانند (نه خطای PHP).
  */
 class AdobeConnectPlatform implements ClassroomPlatform
 {
     const CONNECT_TIMEOUT = 10;
     const TIMEOUT = 15;
+
+    /** @var ClassroomServers|null */
+    protected $server;
+
+    public function __construct(ClassroomServers $server = null)
+    {
+        $this->server = $server;
+    }
+
+    /** آدرس وب‌سرویس واسط */
+    protected function apiUrl()
+    {
+        $url = $this->server !== null ? rtrim($this->server->setting('api_url'), '/') : '';
+        return $url !== '' ? $url : Yii::getAlias('@baseUrl');
+    }
 
     public function title()
     {
@@ -26,6 +42,18 @@ class AdobeConnectPlatform implements ClassroomPlatform
     {
         $response = $this->call('/adobe-connect/add-users-courses/' . rawurlencode((string) $courseId));
         return $response !== null;
+    }
+
+    public function createCourseMeetings($courseId, $newLessonId = null)
+    {
+        $path = '/adobe-connect/create-meeting/' . rawurlencode((string) $courseId);
+        if ($newLessonId !== null && $newLessonId !== '')
+            $path .= '?new-lesson=' . rawurlencode((string) $newLessonId);
+        $response = $this->call($path);
+        if ($response === null)
+            return null;
+        $decoded = json_decode($response);
+        return is_object($decoded) && isset($decoded->status) && $decoded->status == 'ok';
     }
 
     public function removeCourseUser($user, $courseId)
@@ -132,7 +160,7 @@ class AdobeConnectPlatform implements ClassroomPlatform
 
         $headers = ['_id: ' . (string) $adminRole->_id];
         $options = [
-            CURLOPT_URL => Yii::getAlias('@baseUrl') . $path,
+            CURLOPT_URL => $this->apiUrl() . $path,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_ENCODING => '',
             CURLOPT_MAXREDIRS => 10,

@@ -58,6 +58,15 @@ class CertificateManageController extends Controller
                         }
                     ],
                     [
+                        // تغییر وضعیت صدور گواهی دیجیتال فقط برای مدیر سیستم (دکمه هم فقط برای همین نقش نمایش داده می‌شود)
+                        'actions' => ['change_digital_cert'],
+                        'allow' => true,
+                        'roles' => ['@'],
+                        'matchCallback' => function ($rule, $action) {
+                            return Yii::$app->user->identity->role == 'user';
+                        }
+                    ],
+                    [
                         'actions' => ['print-all-certificate','new-print-all-certificate','check-serial-number'],
                         'allow' => true,
                         'roles' => ['@'],
@@ -77,6 +86,7 @@ class CertificateManageController extends Controller
                 'class' => VerbFilter::className(),
                 'actions' => [
                     'logout' => ['post'],
+                    'change_digital_cert' => ['post'],
                 ],
             ],
         ];
@@ -410,8 +420,8 @@ class CertificateManageController extends Controller
     {
         if(isset($_GET['_id']))
         {
-//            $requests = CertificateRequests::find()->where(['course_id' => $_id])->all();
-            $users = Users::find()->where(['courses._id' => $_id])->orderBy(['_id'=>SORT_DESC])->all();
+            $requests = CertificateRequests::find()->where(['course_id' => $_id])->orderBy(['username'=>SORT_DESC])->all();
+            $users = Users::find()->where(['courses._id' => $_id])->orderBy(['last_name'=>SORT_ASC])->all();
             if($users != null)
             {
                 $courseDetail = Courses::findOne($_id);
@@ -427,7 +437,7 @@ class CertificateManageController extends Controller
                     'license' => $license,
                     'license2' => $license2,
                     'general' => $general,
-//                    'requests' => $requests,
+                    'requests' => $requests,
                     'users' => $users,
                 ]);
             }
@@ -439,8 +449,8 @@ class CertificateManageController extends Controller
     {
         if(isset($_GET['_id']))
         {
-//            $requests = CertificateRequests::find()->where(['course_id' => $_id])->all();
-            $users = Users::find()->where(['courses._id' => $_id])->orderBy(['_id'=>SORT_DESC])->all();
+            $requests = CertificateRequests::find()->where(['course_id' => $_id])->orderBy(['username'=>SORT_DESC])->all();
+            $users = Users::find()->where(['courses._id' => $_id])->orderBy(['last_name'=>SORT_ASC])->all();
             if($users != null)
             {
                 $courseDetail = Courses::findOne($_id);
@@ -456,7 +466,7 @@ class CertificateManageController extends Controller
                     'license' => $license,
                     'license2' => $license2,
                     'general' => $general,
-//                    'requests' => $requests,
+                    'requests' => $requests,
                     'users' => $users,
                 ]);
             }
@@ -487,6 +497,11 @@ class CertificateManageController extends Controller
     {
         return Users::find()->where(['username' => $username])->one();
     }
+    public function find_user($_id)
+    {
+        return Users::findOne($_id);
+    }
+
     public function course_detail($_id)
     {
         return Courses::findOne($_id);
@@ -1089,6 +1104,24 @@ class CertificateManageController extends Controller
            }
         }
         return $this->redirect(Yii::$app->request->referrer);
+    }
+
+    public function actionChange_digital_cert()
+    {
+        $post = Yii::$app->request->post('Courses');
+        $id = is_array($post) && isset($post['_id']) && is_string($post['_id']) ? $post['_id'] : '';
+        $course = preg_match('/^[a-f0-9]{24}$/', $id) ? Courses::findOne($id) : null;
+        if ($course != null)
+        {
+            $course->digital_cert = $course->digital_cert !== true;
+            if ($course->save(false, ['digital_cert']))
+                Yii::$app->session->setFlash('status', '8');
+            else
+                Yii::$app->session->setFlash('status', '2');
+        }
+        else
+            Yii::$app->session->setFlash('status', '2');
+        return $this->redirect(\app\components\SafeRedirect::referrer(['certificate-manage/index']));
     }
 
     public function allow($college)

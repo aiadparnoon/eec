@@ -128,6 +128,9 @@ class Courses extends \yii\mongodb\ActiveRecord
             'credit',
             'allow_free_add_user',
             'deadline_date',
+            'classroom_server', // شناسه‌ی سرور کلاس (ClassroomServers) یا 'none'؛ خالی = دوره‌ی قدیمی، سرور پیش‌فرض
+            'classroom_meetings', // جلسه‌های BBB هر درس: [lessonId => meeting_id, attendee_pw, moderator_pw, server]
+            'digital_cert', // true = صدور گواهی دیجیتال برای این دوره فعال است
         ];
     }
 

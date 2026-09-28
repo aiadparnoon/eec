@@ -62,9 +62,38 @@ class CancelingRequestsController extends Controller
                 'class' => VerbFilter::className(),
                 'actions' => [
                     'logout' => ['post'],
+                    'accept' => ['post'],
+                    'reject' => ['post'],
                 ],
             ],
         ];
+    }
+
+    /**
+     * امنیتی: تأیید/رد درخواست انصراف با بازگشت وجه به کیف پول کارگزار همراه است؛ پس کارگزار نباید
+     * بتواند درخواست خودش را تأیید کند، هیچ‌کس درخواستی را که خودش ثبت کرده تأیید نمی‌کند و کارشناس
+     * واحد فقط درخواست‌های واحد خودش را بررسی می‌کند.
+     */
+    public function beforeAction($action)
+    {
+        if (!parent::beforeAction($action))
+            return false;
+        if (!in_array($action->id, ['accept', 'reject'], true) || Yii::$app->user->isGuest)
+            return true;
+        $identity = Yii::$app->user->identity;
+        $post = Yii::$app->request->post('CancelingRequests');
+        $id = is_array($post) && isset($post['_id']) && is_string($post['_id']) ? $post['_id'] : '';
+        $request = preg_match('/^[a-f0-9]{24}$/i', $id) ? CancelingRequests::findOne($id) : null;
+        $allowed = $request !== null && $identity->role != 'broker'
+            && (string) $request->registrant !== (string) $identity->username;
+        if ($allowed && $identity->role == 'emp')
+            $allowed = in_array((string) $request->college, \app\components\StudentAccess::staffColleges(), true);
+        if (!$allowed) {
+            Yii::$app->session->setFlash('status', '2');
+            $this->redirect(\app\components\SafeRedirect::referrer(['index']))->send();
+            return false;
+        }
+        return true;
     }
 
     /**

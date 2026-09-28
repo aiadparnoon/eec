@@ -109,7 +109,7 @@ else
                 $username = Yii::$app->request->queryParams['InstallmentsSearch']['username'];
                 if(Yii::$app->user->identity->role == 'emp')
                     $college = Yii::$app->user->identity->college;
-                else
+                else if(isset(Yii::$app->request->queryParams['InstallmentsSearch']['college']))
                     $college = Yii::$app->request->queryParams['InstallmentsSearch']['college'];
                 $broker = Yii::$app->request->queryParams['InstallmentsSearch']['broker'];
             }
