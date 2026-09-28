@@ -27,6 +27,15 @@ use app\models\OrganizationPayments;
 use app\models\WalletTransactions;
 use app\models\CancelingRequests;
 use app\components\StudentAccess;
+use app\components\CourseAccess;
+use app\components\CourseOptions;
+use app\components\CourseStatus;
+use app\components\SafeRedirect;
+use app\components\UsersDirectory;
+use app\components\XlsxWriter;
+use app\components\classroom\ClassroomPlatforms;
+use app\models\PackagesSearch;
+use yii\web\Response;
 use yii\filters\AccessControl;
 use yii\helpers\ArrayHelper;
 use yii\helpers\Html;
@@ -60,7 +69,7 @@ class PackagesController extends Controller
                         'roles' => ['?'],
                     ],
                     [
-                        'actions' => ['index', 'report','file','members_report', 'edit', 'brokers', 'brokers1', 'broker_contracts', 'capacity', 'course_date', 'my_brokers', 'show_courses', 'edit-package', 'edit_course_in_package', 'add_lesson_to_package','edit_prepayment_installments','edit_installments','delete_installments','show_course_users','delete_course','add_installment','add_single_installment','show_course_lessons','show_finance_info','register_course_scores','other_teachers','register_class_in_adobe','hidden_course','add_discount','delete_discount','recording-grades','register_grades','copy-package','courses_financial','courses_financial_callback','test','contract_file','add_credit_request','add_credit_callback','pay_add_credit'],
+                        'actions' => ['index', 'report','file','members_report', 'edit', 'brokers', 'brokers1', 'broker_contracts', 'capacity', 'course_date', 'my_brokers', 'show_courses', 'edit-package', 'edit_course_in_package', 'add_lesson_to_package','edit_prepayment_installments','edit_installments','delete_installments','show_course_users','delete_course','add_installment','add_single_installment','show_course_lessons','show_finance_info','register_course_scores','other_teachers','register-online','toggle-site','add_discount','delete_discount','recording-grades','register_grades','copy-package','courses_financial','courses_financial_callback','test','contract_file','add_credit_request','add_credit_callback','pay_add_credit'],
                         'allow' => true,
                         'roles' => ['@'],
                         'matchCallback' => function ($rule, $action) {
@@ -71,7 +80,7 @@ class PackagesController extends Controller
                         }
                     ],
                     [
-                        'actions' => ['create-package', 'new', 'unit-options', 'installments-plan', 'new_user' ,'show_user_detail','add_user_from_list','check_excel_file','add_user_from_exel','change_status','change_role','delete_user_from_course','add_user_to_adobe','register_class_in_adobe','contract_file'],
+                        'actions' => ['create-package', 'new', 'unit-options', 'installments-plan', 'new_user' ,'show_user_detail','add_user_from_list','check_excel_file','add_user_from_exel','change_status','change_role','delete_user_from_course','add_user_to_adobe','contract_file'],
                         'allow' => true,
                         'roles' => ['@'],
                         'matchCallback' => function ($rule, $action) {
@@ -104,6 +113,11 @@ class PackagesController extends Controller
                     'new' => ['post'],
                     'edit' => ['post'],
                     'installments-plan' => ['post'],
+                    'copy-package' => ['post'],
+                    'show_course_users' => ['post'],
+                    'delete_course' => ['post'],
+                    'toggle-site' => ['post'],
+                    'register-online' => ['post'],
                 ],
             ],
         ];
@@ -190,36 +204,35 @@ class PackagesController extends Controller
 
     public function actionIndex()
     {
-        $searchModel = new CoursesSearch();
-        $dataProvider = $searchModel->search(Yii::$app->request->queryParams, ['2', '3']);
-        if (Yii::$app->user->identity->role == 'user' || Yii::$app->user->identity->role == 'cnt')
-        {
-            $colleges = Colleges::find()->all();
-            $brokers = Brokers::find()->orderBy(['_id'=>SORT_DESC])->all();
-            $brokers = ArrayHelper::map($brokers, function ($model){
-                return (string) $model->_id;
-            }, function ($model){
-                return $model->connector_info['first_name'].' '.$model->connector_info['last_name'];
-            });
+        $searchModel = new PackagesSearch();
+        $dataProvider = $searchModel->search(Yii::$app->request->queryParams);
+        $courses = $dataProvider->getModels();
+
+        // داده‌های کمکی هر ردیف با کوئری‌های دسته‌ای
+        $ids = $brokerIds = $registrants = $teacherIds = [];
+        foreach ($courses as $course) {
+            $ids[] = (string) $course->_id;
+            if (isset($course->broker['_id']) && is_string($course->broker['_id']))
+                $brokerIds[] = $course->broker['_id'];
+            foreach ((array) $course->lessons as $lesson)
+                if (isset($lesson['teachers']) && is_string($lesson['teachers']))
+                    $teacherIds[] = $lesson['teachers'];
+            $registrants[] = $course->registrant;
         }
-        else
-        {
-            $colleges = Colleges::find()->where(['_id' => Yii::$app->user->identity->college])->all();
-            $brokers = Brokers::find()->where(['college' => Yii::$app->user->identity->college])->orderBy(['_id'=>SORT_DESC])->all();
-            $brokers = ArrayHelper::map($brokers, function ($model){
-                return (string) $model->_id;
-            }, function ($model){
-                return $model->connector_info['first_name'].' '.$model->connector_info['last_name'];
-            });
-        }
-        $dataProvider->pagination->pageSize = 30;
+
         return $this->render('index', [
             'searchModel' => $searchModel,
             'dataProvider' => $dataProvider,
-            'brokers' => $brokers,
-            'colleges' => ArrayHelper::map($colleges, function ($model) {
-                return (string) $model->_id;
-            }, 'title')
+            'courses' => $courses,
+            'teachers' => CourseOptions::namesById(Teachers::class, $teacherIds),
+            'brokerNames' => CourseOptions::brokerNames($brokerIds),
+            'registrants' => UsersDirectory::registrants($registrants),
+            'memberCounts' => CourseOptions::memberCounts($ids),
+            'stats' => PackagesSearch::stats(),
+            'units' => CourseOptions::selectableUnits(),
+            'brokers' => CourseOptions::selectableBrokers(),
+            'filterTeachers' => CourseOptions::selectableTeachers(),
+            'canCreate' => in_array(CourseAccess::role(), ['user', 'cnt', 'emp', 'broker'], true),
         ]);
     }
 
@@ -337,44 +350,40 @@ class PackagesController extends Controller
         ]);
     }
 
+    /**
+     * کپی دوره‌ی میان‌مدت با دروس و شرایط اقساطی (بدون کلاس آنلاین، کد مجوز و سوابق بررسی).
+     */
     public function actionCopyPackage($_id)
     {
-        if (isset($_GET['_id']))
-        {
-            $course = Courses::findOne($_GET['_id']);
-            if ($course != null)
-            {
-                if($this->allow((string) $course->college))
-                {
-                    $model = new Courses();
-                    $model->setAttributes($course->attributes);
-                    $model->status = '3';
-                    $model->license_code = null;
-                    $model->rejection_reason = null;
-                    $model->my_lessons = null;
-                    $model->mentors = null;
-                    $model->other_teachers = null;
-                    $model->adobe_status = null;
-                    $model->preview_image = null;
-                    $model->lessons = null;
-                    $model->registrant = Yii::$app->user->identity->username;
-                    if($course->preview_image != null)
-                    {
-                        $info = pathinfo('../../frontend/web/package_images/' . $course->preview_image);
-                        if($info != null)
-                        {
-                            $newImageName = uniqid().'.'.$info['extension'];
-                            $copyImage = copy('../../frontend/web/package_images/' . $course->preview_image, '../../frontend/web/package_images/' . $newImageName);
-                            if($copyImage == '1')
-                                $model->preview_image = $newImageName;
-                        }
-                    }
-                    $model->save();
-                    return $this->redirect(['../packages/edit-package?_id='.(string) $model->_id]);
-                }
-            }
+        $course = $this->findPackage($_id);
+        if ($course === null || !CourseAccess::canManage($course))
+            return $this->listBack('error', 'دوره یافت نشد یا به آن دسترسی ندارید');
+
+        $model = new Courses();
+        $attributes = $course->attributes;
+        unset($attributes['_id']);
+        $model->setAttributes($attributes, false);
+        $lessons = [];
+        foreach ((array) $course->lessons as $lesson) {
+            if (!is_array($lesson))
+                continue;
+            unset($lesson['meeting']); // کلاس آنلاین برای دوره‌ی جدید دوباره ساخته می‌شود
+            $lessons[] = $lesson;
         }
-        return $this->redirect(['../packages']);
+        $model->lessons = $lessons;
+        $model->status = CourseAccess::role() === 'broker' ? CourseStatus::AWAITING_UNIT : CourseStatus::AWAITING;
+        $model->modified = false;
+        $model->returned_by = null;
+        $model->license_code = null;
+        $model->rejection_reason = null;
+        $model->mentors = null;
+        $model->other_teachers = null;
+        $model->adobe_status = null;
+        $model->classroom_meetings = null;
+        $model->registrant = (string) Yii::$app->user->identity->username;
+        if (!$model->save(false))
+            return $this->listBack('error', 'کپی دوره ناموفق بود');
+        return $this->packageBack('success', 'نسخه‌ی کپی ساخته شد؛ تاریخ‌ها و شرایط اقساطی را بررسی و در صورت نیاز ویرایش کنید', ['edit-package', '_id' => (string) $model->_id]);
     }
 
     public function actionRecordingGrades($_id)
@@ -465,248 +474,91 @@ class PackagesController extends Controller
         return $this->redirect(Yii::$app->request->referrer);
     }
 
+    /**
+     * خروجی اکسل دوره‌های میان‌مدت با همان فیلترهای فهرست (نوشتن جریانی، کوئری‌های دسته‌ای).
+     */
     public function actionReport()
     {
-        date_default_timezone_set('Asia/Tehran');
-        require_once(Yii::$app->basePath . '/web/jdf.php');
-        Yii::$app->setTimeZone('Asia/Tehran');
-        $searchModel = new CoursesSearch();
-        $dataProvider = $searchModel->search(Yii::$app->request->queryParams, ['2','3']);
-        $dataProvider->pagination->pageSize = 2000;
-//        foreach ($dataProvider->models as $model)
-//            echo $model->title['main_en'].'<br>';
-//        exit;
-        $exporter = new Spreadsheet([
-            'dataProvider' => $dataProvider,
-            'columns' => [
-                [
-                    'attribute' => function($model){
-                        $title = str_replace('®',' ',$model->title['main_fa']);
-                        return $title;
-                    },
-                    'header' => 'عنوان اصلی فارسی'
-                ],
-//                [
-//                    'attribute' => function($model){
-//                        $title = str_replace('®',' ',$model->title['main_en']);
-//                        $title = str_replace('®',' ',$title);
-//                        $title = str_replace('’','',$title);
-//                        $title = str_replace('&',' ',$title);
-//                        $title = str_replace('III',' ',$title);
-//                        $title = str_replace('------------',' ',$title);
-//                        return $title;
-//                    },
-//                    'header' => 'عنوان اصلی انگلیسی'
-//                ],
-//                [
-//                    'attribute' => function($model){
-//                        $title = str_replace('®',' ',$model->title['degree_en']);
-//                        $title = str_replace('®',' ',$title);
-//                        $title = str_replace('’','',$title);
-//                        $title = str_replace('&',' ',$title);
-//                        $title = str_replace('III',' ',$title);
-//                        $title = str_replace('------------',' ',$title);
-//                        return $title;
-//                    },
-//                    'header' => 'عنوان انگلیسی داخل مدرک'
-//                ],
-                [
-                    'attribute' => function($model){
-                        if($model->status == '0')
-                            return 'تائید شده - غیرفعال';
-                        else if($model->status == '1')
-                            return 'تائید شده - فعال';
-                        else if($model->status == '2')
-                            return 'در انتظار تائید';
-                        else if($model->status == '3')
-                            return 'پیش نویس';
-                        else if($model->status == '4')
-                            return 'نیار به اصلاح';
-                        else if($model->status == '5')
-                            return 'رد شده';
-                        else if($model->status == '6')
-                            return 'پایان یافته';
-                    },
-                    'header' => 'وضعیت دوره'
-                ],
-                [
-                    'attribute' => function($model)
-                    {
-                        if($model->license_code != null && $model->license_code != '')
-                            return $model->license_code;
-                        else
-                            return '-';
-                    },
-                    'header' => 'کد مجوز'
-                ],
-                [
-                    'attribute' => function($model){
-                    if(is_numeric($model->price))
-                        return number_format($model->price);
-                    else
-                        return $model->price;
-                    },
-                    'header' => 'قیمت اصلی (تومان)'
-                ],
-                [
-                    'attribute' => function($model){
-                        if($model->discount_price != '')
-                        {
-                            if(is_numeric($model->discount_price))
-                                return number_format($model->discount_price);
-                            else
-                                return $model->discount_price;
-                        }
-                        else
-                            return number_format($model->price);
-                    },
-                    'header' => 'قیمت با تخفیف (تومان)'
-                ],
-                [
-                    'attribute' => function($model){
-                        return $model->duration;
-                    },
-                    'header' => 'مدت زمان دوره (ساعت)'
-                ],
-                [
-                    'attribute' => function($model){
-                        if($model->student_capacity['type'] == '1')
-                            return 'نامحدود';
-                        else if($model->student_capacity['type'] == '2')
-                        {
-                            if(array_key_exists('number', $model->student_capacity))
-                                return $model->student_capacity['number'].' نفر';
-                            else
-                                return '-';
-                        }
-                        else
-                            return 'سازمانی';
-                    },
-                    'header' => 'ظرفیت دوره'
-                ],
-                [
-                    'attribute' => function($model){
-                        if($model->content_type == '1')
-                            return 'غیر حضوری';
-                        else if($model->content_type == '2')
-                            return 'نیمه حضوری';
-                        else if($model->content_type == '3')
-                            return 'محتوا محور';
-                        else
-                            return 'حضوری';
-                    },
-                    'header' => 'نوع دوره'
-                ],
-                [
-                    'attribute' => function($model){
-                        $ret = '-';
-                        if(is_array($model->date))
-                            if(array_key_exists('from', $model->date))
-                                $ret = $model->date['from'];
-                        return $ret;
-                    },
-                    'header' => 'تاریخ شروع دوره'
-                ],
-                [
-                    'attribute' => function($model){
-                        $ret = '-';
-                        if(is_array($model->date))
-                            if(array_key_exists('to', $model->date))
-                                $ret = $model->date['to'];
-                        return $ret;
-                    },
-                    'header' => 'تاریخ اتمام دوره'
-                ],
-                [
-                    'attribute' => function($model){
-                        return $model->description;
-                    },
-                    'header' => 'توضیحات دوره'
-                ],
-                [
-                    'attribute' => function($model){
-                        $college = Colleges::findOne($model->college);
-                        if($college != null)
-                            return $college->title;
-                        else
-                            return 'خطا';
-                    },
-                    'header' => 'دانشکده'
-                ],
-                [
-                    'attribute' => function($model){
-                        $ret = 'خطا';
-                        if($model->broker != null)
-                        {
-                            if(is_array($model->broker))
-                            {
-                                if(array_key_exists('_id', $model->broker) && array_key_exists('contract', $model->broker))
-                                {
-                                    if($model->broker['_id'] != null && $model->broker['contract'] != null)
-                                    {
-                                        $broker = Brokers::findOne($model->broker['_id']);
-                                        if($broker != null)
-                                        {
-                                            $brokerContract = 'قرارداد یاقت نشد';
-                                            foreach ($broker->contracts as $contract)
-                                            {
-                                                if($contract['id'] == $model->broker['contract'])
-                                                    $brokerContract = 'قرارداد با عنوان '.$contract['title'].' و سهم '.$contract['share'].' درصدی';
-                                            }
-                                            $ret = $broker->connector_info['first_name'].' '.$broker->connector_info['last_name'].' - '.$brokerContract;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        return $ret;
-                    },
-                    'header' => 'کارگزار'
-                ],
-                [
-                    'attribute' => function($model){
-                       if($model->lessons != null)
-                       {
-                           $lessons = array();
-                           foreach ($model->lessons as $value)
-                           {
-                               $lesson = Lessons::findOne($value['_id']);
-                               $teacher = Teachers::findOne($value['teachers']);
-                               if($teacher != null)
-                               {
-                                   $from = '*';
-                                   $to = '*';
-                                   $time = '*';
-                                   if(array_key_exists('from', $value['date']))
-                                       $from = $value['date']['from'];
-                                   if(array_key_exists('to', $value['date']))
-                                       $to = $value['date']['to'];
-                                   if(array_key_exists('time', $value['date']))
-                                       $time = $value['date']['time'];
-                                   $ls = $lesson->title.' - مدرس: '.$teacher->first_name.' '.$teacher->last_name.' - شروع دوره از تاریخ '.$from.' ساعت '.$time.' تا تاریخ '.$to;
-                               }
-                               else
-                                   $ls = '****';
-                               array_push($lessons, $ls);
-                           }
-                           if($lessons != null)
-                           {
-                               $finalLessons = '';
-                               foreach ($lessons as $item)
-                                   $finalLessons = $finalLessons.'****'.$item;
-                               return $finalLessons;
-                           }
-                           else
-                               return '-';
-                       }
-                    },
-                    'header' => 'درس دوره'
-                ],
-            ],
-        ]);
-        $exporter->save('./newfile.xlsx');
-        $file_name = 'PackageCourses-' . jdate('Y/m/d-H:i:s') . '.xlsx';
-        return Yii::$app->response->sendFile('./newfile.xlsx', $file_name);
+        @set_time_limit(0);
+        $searchModel = new PackagesSearch();
+        $query = $searchModel->search(Yii::$app->request->queryParams)->query;
+        $writer = new XlsxWriter(
+            ['ردیف', 'عنوان اصلی فارسی', 'عنوان اصلی انگلیسی', 'عنوان فارسی داخل گواهی', 'عنوان انگلیسی داخل گواهی', 'وضعیت دوره', 'کد مجوز',
+                'شهریه (تومان)', 'شهریه با تخفیف (تومان)', 'مدت زمان (ساعت)', 'ظرفیت', 'نوع دوره', 'تاریخ شروع', 'تاریخ پایان', 'مهلت ثبت‌نام',
+                'نوع پرداخت', 'پیش‌پرداخت (تومان)', 'تعداد اقساط', 'جمع اقساط و پیش‌پرداخت (تومان)',
+                'واحد', 'کارگزار', 'ثبت‌کننده', 'تعداد دروس', 'دروس', 'مدرسان', 'تاریخ ثبت', 'تعداد دانشپذیر'],
+            [7, 40, 30, 40, 30, 22, 16, 16, 16, 12, 14, 12, 12, 12, 12, 14, 16, 10, 20, 24, 24, 24, 10, 50, 40, 12, 14]
+        );
+        $units = UsersDirectory::collegeTitles();
+        foreach ($query->batch(300) as $courses) {
+            $ids = $teacherIds = $lessonIds = $brokerIds = $registrantNames = [];
+            foreach ($courses as $course) {
+                $ids[] = (string) $course->_id;
+                foreach ((array) $course->lessons as $lesson) {
+                    if (isset($lesson['teachers']) && is_string($lesson['teachers']))
+                        $teacherIds[] = $lesson['teachers'];
+                    if (isset($lesson['_id']) && is_string($lesson['_id']))
+                        $lessonIds[] = $lesson['_id'];
+                }
+                if (isset($course->broker['_id']) && is_string($course->broker['_id']))
+                    $brokerIds[] = $course->broker['_id'];
+                $registrantNames[] = $course->registrant;
+            }
+            $teachers = CourseOptions::namesById(Teachers::class, $teacherIds);
+            $lessonTitles = CourseOptions::namesById(Lessons::class, $lessonIds, 'title');
+            $brokers = CourseOptions::brokerNames($brokerIds);
+            $members = CourseOptions::memberCounts($ids);
+            $registrants = UsersDirectory::registrants($registrantNames);
+            foreach ($courses as $course) {
+                $id = (string) $course->_id;
+                $t = is_array($course->title) ? $course->title : [];
+                $d = is_array($course->date) ? $course->date : [];
+                $cap = is_array($course->student_capacity) ? $course->student_capacity : [];
+                $capacity = isset($cap['type']) ? ((string) $cap['type'] === '2' ? (isset($cap['number']) ? $cap['number'] . ' نفر' : 'محدود') : ((string) $cap['type'] === '3' ? 'سازمانی' : 'نامحدود')) : '';
+                $names = $teacherNames = [];
+                foreach ((array) $course->lessons as $lesson) {
+                    $lid = isset($lesson['_id']) ? (string) $lesson['_id'] : '';
+                    $tid = isset($lesson['teachers']) ? (string) $lesson['teachers'] : '';
+                    if (isset($lessonTitles[$lid]))
+                        $names[] = $lessonTitles[$lid];
+                    if (isset($teachers[$tid]))
+                        $teacherNames[$tid] = $teachers[$tid];
+                }
+                $plan = is_array($course->installments) ? array_values($course->installments) : [];
+                $planSum = ctype_digit((string) $course->prepayment_installments) ? (int) $course->prepayment_installments : 0;
+                foreach ($plan as $row)
+                    if (isset($row['amount']) && ctype_digit((string) $row['amount']))
+                        $planSum += (int) $row['amount'];
+                $brokerId = isset($course->broker['_id']) ? (string) $course->broker['_id'] : '';
+                $registrant = UsersDirectory::describeUsername(is_scalar($course->registrant) ? (string) $course->registrant : '', '', $registrants);
+                $writer->addRow([
+                    $writer->rowCount() + 1,
+                    isset($t['main_fa']) ? (string) $t['main_fa'] : '', isset($t['main_en']) ? (string) $t['main_en'] : '',
+                    isset($t['degree_fa']) ? (string) $t['degree_fa'] : '', isset($t['degree_en']) ? (string) $t['degree_en'] : '',
+                    CourseStatus::label($course)[0],
+                    (string) $course->license_code,
+                    is_numeric($course->price) ? (float) $course->price : '', is_numeric($course->discount_price) && (float) $course->discount_price > 0 ? (float) $course->discount_price : '',
+                    is_numeric($course->duration) ? (int) $course->duration : '',
+                    $capacity,
+                    UsersDirectory::contentType($course->content_type),
+                    isset($d['from']) ? str_replace('-', '/', (string) $d['from']) : '', isset($d['to']) ? str_replace('-', '/', (string) $d['to']) : '',
+                    is_scalar($course->deadline_date) ? str_replace('-', '/', (string) $course->deadline_date) : '',
+                    empty($plan) ? 'نقدی' : 'نقدی یا اقساطی',
+                    empty($plan) ? '' : (int) $course->prepayment_installments,
+                    count($plan),
+                    empty($plan) ? '' : $planSum,
+                    isset($units[(string) $course->college]) ? $units[(string) $course->college] : '',
+                    isset($brokers[$brokerId]) ? $brokers[$brokerId] : '',
+                    is_scalar($course->registrant) && (string) $course->registrant !== '' ? $registrant['name'] . ' (' . $registrant['roleLabel'] . ')' : '',
+                    count((array) $course->lessons),
+                    implode('، ', $names),
+                    implode('، ', $teacherNames),
+                    UsersDirectory::jdate('Y/m/d', hexdec(substr($id, 0, 8))),
+                    isset($members[$id]) ? $members[$id] : 0,
+                ]);
+            }
+        }
+        return CourseOptions::sendXlsx($writer, 'MidTermCourses');
     }
 
     /**
@@ -848,6 +700,21 @@ class PackagesController extends Controller
     {
         Yii::$app->session->setFlash(\frontend\controllers\CourseMembersController::FLASH, ['type' => $type, 'message' => $message]);
         return $this->redirect($url);
+    }
+
+    /** بازگشت به صفحه‌ی قبل (فهرست) با پیام */
+    private function listBack($type, $message)
+    {
+        return $this->packageBack($type, $message, SafeRedirect::referrer(['index']));
+    }
+
+    /** دوره‌ی میان‌مدت با شناسه‌ی معتبر، وگرنه null */
+    private function findPackage($id)
+    {
+        if (!is_string($id) || !preg_match('/^[a-f0-9]{24}$/i', $id))
+            return null;
+        $course = Courses::findOne($id);
+        return $course !== null && in_array((string) $course->type, PackagesSearch::TYPES, true) ? $course : null;
     }
 
     public function actionBrokers($id)
@@ -3343,63 +3210,26 @@ class PackagesController extends Controller
 
     public function actionShow_course_users()
     {
-        if(isset($_POST['id']))
-        {
-            $course = Courses::findOne($_POST['id']);
-            if($course != null)
-            {
-                $users = Users::find()->where(['courses._id' => (string) $course->_id])->all();
-                if($users != null)
-                {
-                    $response = array(
-                        'title' => 'حذف دوره '.$course->title['main_fa'],
-                        'body' => 'به دلیل اینکه دوره '.$course->title['main_fa'].' دارای دانشپذیر می باشد قابل حذف نیست',
-                        'submit' => null
-                    );
-                }
-                else
-                {
-                    ob_start();
-                    $form = ActiveForm::begin(
-                        [
-                            'action' => ['delete_course'],
-                            "method" => "post",
-                        ]
-                    );
-                    echo '<input type="hidden" name="_id" value="'.(string) $course->_id.'">';
-                    echo '<button type="submit" class="btn btn-label-danger">بله مطمئنم</button>';
-                    ActiveForm::end();
-                    $submit = ob_get_contents();
-                    ob_end_clean();
-                    $response = array(
-                        'title' => 'حذف دوره '.$course->title['main_fa'],
-                        'body' => 'آیا از حذف دوره '.$course->title['main_fa'].' مطمئن هستید؟',
-                        'submit' => $submit
-                    );
-                }
-                return json_encode($response);
-            }
-            else
-                return false;
-        }
-        else
-            return false;
+        Yii::$app->response->format = Response::FORMAT_JSON;
+        $course = $this->findPackage((string) Yii::$app->request->post('id'));
+        if ($course === null || !CourseAccess::canManage($course))
+            return ['ok' => false, 'message' => 'دوره یافت نشد یا به آن دسترسی ندارید'];
+        $title = isset($course->title['main_fa']) ? (string) $course->title['main_fa'] : '';
+        if (Users::find()->where(['courses._id' => (string) $course->_id])->exists())
+            return ['ok' => false, 'message' => 'دوره‌ی «' . $title . '» دانشپذیر دارد و قابل حذف نیست'];
+        if (!CourseAccess::canDelete($course))
+            return ['ok' => false, 'message' => 'دوره‌ی تأییدشده را فقط مدیر سیستم می‌تواند حذف کند'];
+        return ['ok' => true, 'message' => 'آیا از حذف دوره‌ی «' . $title . '» مطمئن هستید؟'];
     }
 
     public function actionDelete_course()
     {
-        if(Yii::$app->request->isPost)
-        {
-            $course = Courses::findOne(Yii::$app->request->post('_id'));
-            if($course != null)
-            {
-                if($course->delete())
-                    Yii::$app->session->setFlash('status','10');
-                else
-                    Yii::$app->session->setFlash('status','2');
-            }
-        }
-        return $this->redirect(Yii::$app->request->referrer);
+        $course = $this->findPackage((string) Yii::$app->request->post('_id'));
+        if ($course === null || !CourseAccess::canDelete($course))
+            return $this->listBack('error', 'این دوره قابل حذف نیست (دانشپذیر دارد یا دسترسی لازم را ندارید)');
+        if ($course->delete())
+            return $this->listBack('success', 'دوره حذف شد');
+        return $this->listBack('error', 'خطا در حذف دوره');
     }
 
     /**
@@ -3819,74 +3649,39 @@ class PackagesController extends Controller
        return $this->redirect(Yii::$app->request->referrer);
     }
 
-    public function actionRegister_class_in_adobe()
+    /**
+     * ساخت مجدد کلاس آنلاین دوره (وقتی ساخت اولیه ناموفق بوده) از طریق سرور انتخاب‌شده (Adobe/BBB).
+     */
+    public function actionRegisterOnline()
     {
-        if(Yii::$app->request->post())
-        {
-            $course = Courses::findOne(Yii::$app->request->post()['Courses']['_id']);
-            if($course != null)
-            {
-                // Call AdobeConnect For Create Meetings Course
-                $adminRole = Admin::find()->where(['role' => 'user'])->one();
-                if($adminRole != null && ($course->content_type == '1' || $course->content_type == '2'))
-                {
-                    $curl = curl_init();
-
-                    curl_setopt_array($curl, array(
-                        CURLOPT_URL => Yii::getAlias('@baseUrl').'/adobe-connect/create-meeting/'.(string) $course->_id,
-                        CURLOPT_RETURNTRANSFER => true,
-                        CURLOPT_ENCODING => '',
-                        CURLOPT_MAXREDIRS => 10,
-                        CURLOPT_TIMEOUT => 0,
-                        CURLOPT_FOLLOWLOCATION => true,
-                        CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-                        CURLOPT_CUSTOMREQUEST => 'POST',
-                        CURLOPT_HTTPHEADER => array(
-                            '_id: '.(string) $adminRole->_id
-                        ),
-                    ));
-                    $response = curl_exec($curl);
-                    $response = json_decode($response);
-                    curl_close($curl);
-                    if(property_exists($response,'status'))
-                    {
-                        if($response->status == 'ok')
-                            $course->adobe_status = '1';
-                        else
-                            $course->adobe_status = '0';
-                    }
-                    else
-                        $course->adobe_status = '0';
-                }
-                $course->save();
-                if($course->adobe_status == '1')
-                    Yii::$app->session->setFlash('status','12');
-                else
-                    Yii::$app->session->setFlash('status','13');
-                // Call AdobeConnect For Create Meetings Course
-            }
-        }
-        return $this->redirect(Yii::$app->request->referrer);
+        $course = $this->findPackage((string) Yii::$app->request->post('_id'));
+        if ($course === null || !CourseAccess::canManage($course))
+            return $this->listBack('error', 'دوره یافت نشد یا به آن دسترسی ندارید');
+        if (!ClassroomPlatforms::hasOnlineClass($course))
+            return $this->listBack('warning', 'این دوره کلاس آنلاین ندارد');
+        $platform = ClassroomPlatforms::forCourse($course);
+        $result = $platform->createCourseMeetings((string) $course->_id);
+        $course->adobe_status = $result === true ? '1' : '0';
+        $course->save(false, ['adobe_status']);
+        if ($result === true)
+            return $this->listBack('success', 'کلاس آنلاین دوره در ' . $platform->title() . ' ساخته شد');
+        return $this->listBack('error', $result === null ? 'ارتباط با سرور ' . $platform->title() . ' برقرار نشد' : 'ساخت کلاس آنلاین ناموفق بود');
     }
 
-    public function actionHidden_course()
+    /**
+     * نمایش/مخفی کردن دوره‌ی فعال در سایت اصلی.
+     */
+    public function actionToggleSite()
     {
-        if(Yii::$app->request->isPost)
-        {
-            $course = Courses::findOne(Yii::$app->request->post()['Courses']['_id']);
-            if($course != null)
-            {
-                if($course->show_in_site === false)
-                    $course->show_in_site = true;
-                else
-                    $course->show_in_site = false;
-                if($course->save())
-                    Yii::$app->session->setFlash('status','14');
-                else
-                    Yii::$app->session->setFlash('status','2');
-            }
-        }
-        return $this->redirect(Yii::$app->request->referrer);
+        $course = $this->findPackage((string) Yii::$app->request->post('_id'));
+        if ($course === null || !CourseAccess::canManage($course))
+            return $this->listBack('error', 'دوره یافت نشد یا به آن دسترسی ندارید');
+        if ((string) $course->status !== CourseStatus::ACTIVE)
+            return $this->listBack('warning', 'فقط دوره‌ی فعال در سایت نمایش داده می‌شود');
+        $course->show_in_site = $course->show_in_site === false;
+        if ($course->save(false, ['show_in_site']))
+            return $this->listBack('success', $course->show_in_site ? 'دوره در سایت نمایش داده می‌شود' : 'دوره از سایت مخفی شد');
+        return $this->listBack('error', 'خطا در ذخیره‌سازی');
     }
 
     public function actionAdd_discount()

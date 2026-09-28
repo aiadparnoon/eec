@@ -32,6 +32,10 @@ class ShortCoursesSearch extends Model
     public $per_page;
 
     const TYPE = '1';
+    /** نوع(های) دوره در این فهرست */
+    const TYPES = ['1'];
+    /** فیلد تاریخ شروع برگزاری (کوتاه‌مدت: تاریخ درس؛ میان‌مدت: تاریخ دوره) */
+    const START_FIELD = 'lessons.0.date.from';
     const PAGE_SIZES = [20, 50, 100];
 
     public function formName()
@@ -59,7 +63,7 @@ class ShortCoursesSearch extends Model
      */
     public static function scopedQuery()
     {
-        $query = Courses::find()->where(['type' => self::TYPE, 'from_pec' => ['$ne' => true]]);
+        $query = Courses::find()->where(['type' => count(static::TYPES) === 1 ? static::TYPES[0] : static::TYPES, 'from_pec' => ['$ne' => true]]);
         CourseAccess::applyScope($query);
         if (CourseAccess::isAdmin())
             $query->andWhere(['status' => ['$nin' => [CourseStatus::AWAITING_UNIT, CourseStatus::UNIT_CORRECTION, CourseStatus::UNIT_REJECTED]]]);
@@ -68,7 +72,7 @@ class ShortCoursesSearch extends Model
 
     public function search($params)
     {
-        $query = self::scopedQuery();
+        $query = static::scopedQuery();
         $this->load($params);
         foreach ($this->safeAttributes() as $attribute)
             if ($this->$attribute !== null && !is_scalar($this->$attribute))
@@ -104,9 +108,9 @@ class ShortCoursesSearch extends Model
 
         // تاریخ برگزاری به‌صورت رشته‌ی شمسی YYYY-MM-DD ذخیره شده؛ مقایسه‌ی رشته‌ای درست است
         if (($from = self::jalaliKey($this->start_from)) !== null)
-            $query->andWhere(['lessons.0.date.from' => ['$gte' => $from]]);
+            $query->andWhere([static::START_FIELD => ['$gte' => $from]]);
         if (($to = self::jalaliKey($this->start_to)) !== null)
-            $query->andWhere(['lessons.0.date.from' => ['$lte' => $to]]);
+            $query->andWhere([static::START_FIELD => ['$lte' => $to]]);
 
         $created1 = UsersSearch::jalaliToTimestamp($this->created_from, false);
         $created2 = UsersSearch::jalaliToTimestamp($this->created_to, true);
@@ -118,7 +122,7 @@ class ShortCoursesSearch extends Model
         if ($this->sort_by === 'oldest')
             $query->orderBy(['_id' => SORT_ASC]);
         else if ($this->sort_by === 'start')
-            $query->orderBy(['lessons.0.date.from' => SORT_DESC, '_id' => SORT_DESC]);
+            $query->orderBy([static::START_FIELD => SORT_DESC, '_id' => SORT_DESC]);
         else
             $query->orderBy(['_id' => SORT_DESC]);
         return $provider;
@@ -153,7 +157,7 @@ class ShortCoursesSearch extends Model
     public static function stats()
     {
         $count = function ($condition = null) {
-            $query = self::scopedQuery();
+            $query = static::scopedQuery();
             if ($condition !== null)
                 $query->andWhere($condition);
             return (int) $query->count();
