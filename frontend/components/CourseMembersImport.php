@@ -13,7 +13,7 @@ use app\models\UsersSearch;
 use app\models\WalletTransactions;
 
 /**
- * افزودن اعضای دوره‌ی کوتاه‌مدت از فایل اکسل.
+ * افزودن اعضای دوره (کوتاه‌مدت و میان‌مدت) از فایل اکسل.
  *
  * ستون‌ها: A نام، B نام خانوادگی، C نام کاربری (موبایل یا ایمیل)، D کد ملی (رمز اولیه‌ی حساب جدید)،
  * E نام انگلیسی، F نام خانوادگی انگلیسی، G جنسیت (1 مرد، 2 زن). ردیف اول عنوان ستون‌هاست.
@@ -330,8 +330,8 @@ class CourseMembersImport
     public static function courseBlockers(Courses $course, $count)
     {
         $blockers = [];
-        if ((string) $course->type !== '1')
-            $blockers[] = 'این بخش فقط برای دوره‌های کوتاه‌مدت است';
+        if (!in_array((string) $course->type, ['1', '2'], true))
+            $blockers[] = 'این بخش فقط برای دوره‌های کوتاه‌مدت و میان‌مدت است';
         if (!CourseAccess::canManage($course))
             $blockers[] = 'به این دوره دسترسی ندارید';
         if (!CourseAccess::isAdmin()) {
@@ -351,13 +351,18 @@ class CourseMembersImport
         return $blockers;
     }
 
-    /** مهلت ثبت عضو (شمسی Y-m-d)؛ برای دوره‌های قدیمی از تاریخ‌های درس محاسبه می‌شود */
+    /**
+     * مهلت ثبت عضو (شمسی Y-m-d)؛ اگر ذخیره نشده باشد از تاریخ‌های دوره محاسبه می‌شود
+     * (کوتاه‌مدت: تاریخ درس؛ میان‌مدت: تاریخ دوره).
+     */
     public static function deadline(Courses $course)
     {
         $deadline = ShortCourseForm::jalaliDate((string) $course->deadline_date);
         if ($deadline !== null)
             return $deadline;
-        $date = isset($course->lessons[0]['date']) && is_array($course->lessons[0]['date']) ? $course->lessons[0]['date'] : [];
+        $date = (string) $course->type === '2'
+            ? (is_array($course->date) ? $course->date : [])
+            : (isset($course->lessons[0]['date']) && is_array($course->lessons[0]['date']) ? $course->lessons[0]['date'] : []);
         return isset($date['from'], $date['to']) ? ShortCourseForm::registrationDeadline((string) $date['from'], (string) $date['to']) : null;
     }
 

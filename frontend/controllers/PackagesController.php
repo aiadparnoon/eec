@@ -331,14 +331,11 @@ class PackagesController extends Controller
     {
         if (isset($_GET['_id']))
         {
-            $model = Courses::find()->where(['_id' => $_GET['_id']])->andWhere(['<>','type','1'])->one();
-            if ($model != null)
-            {
-                if($this->allow((string) $model->college))
-                {
-                    return $this->renderEditPackageView($model);
-                }
-            }
+            $id = is_string($_GET['_id']) && preg_match('/^[a-f0-9]{24}$/i', $_GET['_id']) ? $_GET['_id'] : null;
+            $model = $id === null ? null : Courses::find()->where(['_id' => $id])->andWhere(['<>','type','1'])->one();
+            // دسترسی بر اساس نقش (مدیر سیستم، واحد خود، کارگزارِ همان دوره، استاد دوره)
+            if ($model != null && \app\components\CourseAccess::canView($model))
+                return $this->renderEditPackageView($model);
         }
         return $this->redirect(['../packages']);
     }
@@ -371,14 +368,11 @@ class PackagesController extends Controller
 //                else
         $remainingLessons = Lessons::find()->where(['college' => $model->college])->all();
         $discounts = Discounts::find()->where(['course_id' => (string) $model->_id])->all();
-        $searchModel = new CoursesMembers();
+        $searchModel = new \app\models\CourseMembersSearch();
         $dataProvider = $searchModel->search(Yii::$app->request->queryParams, (string) $model->_id);
-        $dataProvider->pagination->pageSize = 50;
         $courseFinancial = CoursesFinancial::find()->where(['course_id' => (string) $model->_id])->andWhere(['payment_info.status' => '2'])->orderBy(['_id'=>SORT_DESC])->all();
         $addRequests = OrganizationPayments::find()->where(['product_id' => (string) $model->_id])->all();
-        $allowEdit = true;
-        if(($model->status == '1' || $model->status == '6') && Yii::$app->user->identity->role != 'user' && Yii::$app->user->identity->role != 'cnt')
-            $allowEdit = false;
+        $allowEdit = \app\components\CourseAccess::canEdit($model);
         return $this->render('edit-package', [
             'colleges' => ArrayHelper::map($colleges, function ($m) {
                 return (string) $m->_id;
@@ -394,7 +388,9 @@ class PackagesController extends Controller
             'discounts' => $discounts,
             'allowEdit' => $allowEdit,
             'courseFinancial' => $courseFinancial,
-            'addRequests' => $addRequests
+            'addRequests' => $addRequests,
+            'memberStats' => \app\models\CourseMembersSearch::stats((string) $model->_id),
+            'servers' => \app\models\ClassroomServers::activeOptions(),
         ]);
     }
 

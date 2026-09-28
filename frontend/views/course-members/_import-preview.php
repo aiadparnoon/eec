@@ -102,7 +102,7 @@ foreach ($analysis['rows'] as $row)
 <?php endif; ?>
 
 <?php if ($token !== null && $analysis['ok']): ?>
-    <?= Html::beginForm(['members-import', '_id' => (string) $course->_id], 'post', ['class' => 'd-flex flex-wrap justify-content-between align-items-center mt-3 gap-2', 'id' => 'members-import-form']) ?>
+    <?= Html::beginForm(['course-members/import', '_id' => (string) $course->_id], 'post', ['class' => 'd-flex flex-wrap justify-content-between align-items-center mt-3 gap-2', 'id' => 'members-import-form']) ?>
         <small class="text-muted">
             همه‌ی ردیف‌ها بدون خطا هستند. دانشپذیران به واحد دوره اضافه می‌شوند؛ رمز اولیه‌ی حساب‌های جدید کد ملی است و در اولین ورود باید تغییر کند.
             فایل بلافاصله پس از ثبت حذف می‌شود و هنگام ثبت دوباره بررسی می‌شود.
