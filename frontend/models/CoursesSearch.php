@@ -133,7 +133,7 @@ class CoursesSearch extends Courses
                 ->andFilterWhere([
                     'like',
                     'title.main_fa',
-                    $this->title['main_fa'] ?? null
+                    ($this->title['main_fa'] ?? null) ?? null
                 ])
                 ->andFilterWhere(['like', 'license_code', $this->license_code])
                 ->andFilterWhere(['like', 'content_type', $this->content_type])
@@ -143,7 +143,7 @@ class CoursesSearch extends Courses
                 ->andFilterWhere([
                     'like',
                     'broker._id',
-                    $this->broker['_id'] ?? null
+                    ($this->broker['_id'] ?? null) ?? null
                 ])
                 ->andFilterWhere(['like', '_id', $this->_id])
                 ->andWhere(['in','type', $type])
@@ -156,10 +156,10 @@ class CoursesSearch extends Courses
                 ->orderBy(['_id'=>SORT_DESC]);
         else if($user->role == 'emp')
             $query->andFilterWhere(['like', '_id', $this->_id])
-                ->andFilterWhere(['like', 'title.main_fa', $this->title['main_fa']])
+                ->andFilterWhere(['like', 'title.main_fa', ($this->title['main_fa'] ?? null)])
                 ->andFilterWhere(['like', 'license_code', $this->license_code])
                 ->andFilterWhere(['like', 'content_type', $this->content_type])
-                ->andFilterWhere(['like', 'broker._id', $this->broker['_id']])
+                ->andFilterWhere(['like', 'broker._id', ($this->broker['_id'] ?? null)])
                 ->andFilterWhere(['like', 'status', $this->status])
                 ->andFilterWhere(['like', '_id', $this->_id])
                 ->andWhere(['type' => $type])
@@ -172,10 +172,10 @@ class CoursesSearch extends Courses
         {
             $brokerDetail = Brokers::find()->where(['connector_info.mobile' => Yii::$app->user->identity->username])->one();
             $query->andFilterWhere(['like', '_id', $this->_id])
-                ->andFilterWhere(['like', 'title.main_fa', $this->title['main_fa']])
+                ->andFilterWhere(['like', 'title.main_fa', ($this->title['main_fa'] ?? null)])
                 ->andFilterWhere(['like', 'license_code', $this->license_code])
                 ->andFilterWhere(['like', 'content_type', $this->content_type])
-                ->andFilterWhere(['like', 'broker._id', $this->broker['_id']])
+                ->andFilterWhere(['like', 'broker._id', ($this->broker['_id'] ?? null)])
                 ->andFilterWhere(['like', 'status', $this->status])
 //            ->andFilterWhere(['like', 'teachers', $this->teachers])
                 ->andFilterWhere(['like', '_id', $this->_id])
@@ -192,10 +192,10 @@ class CoursesSearch extends Courses
             if($user->mentor == 'mentor')
             {
                 $query->andFilterWhere(['like', '_id', $this->_id])
-                    ->andFilterWhere(['like', 'title.main_fa', $this->title['main_fa']])
+                    ->andFilterWhere(['like', 'title.main_fa', ($this->title['main_fa'] ?? null)])
                     ->andFilterWhere(['like', 'license_code', $this->license_code])
                     ->andFilterWhere(['like', 'content_type', $this->content_type])
-                    ->andFilterWhere(['like', 'broker._id', $this->broker['_id']])
+                    ->andFilterWhere(['like', 'broker._id', ($this->broker['_id'] ?? null)])
                     ->andFilterWhere(['like', 'status', $this->status])
                     ->andFilterWhere(['like', '_id', $this->_id])
                     ->andWhere(['type' => $type])
@@ -209,10 +209,10 @@ class CoursesSearch extends Courses
             {
                 $teacher = Teachers::find()->where(['mobile' => $user->username])->one();
                 $query->andFilterWhere(['like', '_id', $this->_id])
-                    ->andFilterWhere(['like', 'title.main_fa', $this->title['main_fa']])
+                    ->andFilterWhere(['like', 'title.main_fa', ($this->title['main_fa'] ?? null)])
                     ->andFilterWhere(['like', 'license_code', $this->license_code])
                     ->andFilterWhere(['like', 'content_type', $this->content_type])
-                    ->andFilterWhere(['like', 'broker._id', $this->broker['_id']])
+                    ->andFilterWhere(['like', 'broker._id', ($this->broker['_id'] ?? null)])
                     ->andFilterWhere(['like', 'status', $this->status])
 //            ->andFilterWhere(['like', 'teachers', $this->teachers])
                     ->andWhere(['type' => $type])

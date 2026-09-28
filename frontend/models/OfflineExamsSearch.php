@@ -68,14 +68,14 @@ class OfflineExamsSearch extends OfflineExams
         $user = Yii::$app->user->identity;
         if($user->role == 'user')
             $query->andFilterWhere(['like', '_id', $this->_id])
-                ->andFilterWhere(['like', 'title.fa', $this->title['fa']])
+                ->andFilterWhere(['like', 'title.fa', ($this->title['fa'] ?? null)])
                 ->andFilterWhere(['like', 'start_date', $this->start_date])
                 ->andFilterWhere(['like', 'applicant_info.gender', $this->applicant_info['gender']])
                 ->andFilterWhere(['like', 'applicant_info.ut_student', $this->applicant_info['ut_student']])
                 ->orderBy(['_id' => SORT_DESC]);
         else if($user->role == 'emp')
             $query->andFilterWhere(['like', '_id', $this->_id])
-                ->andFilterWhere(['like', 'title.fa', $this->title['fa']])
+                ->andFilterWhere(['like', 'title.fa', ($this->title['fa'] ?? null)])
                 ->andFilterWhere(['like', 'start_date', $this->start_date])
                 ->andFilterWhere(['like', 'applicant_info.gender', $this->applicant_info['gender']])
                 ->andWhere(['registrant' => Yii::$app->user->identity->username])
