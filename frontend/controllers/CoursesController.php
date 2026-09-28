@@ -17,6 +17,7 @@ use app\models\ShortCoursesSearch;
 use app\models\Teachers;
 use app\models\Users;
 use app\components\CourseAccess;
+use app\components\CourseOptions;
 use app\components\CourseStatus;
 use app\components\SafeRedirect;
 use app\components\SecureUpload;
@@ -148,34 +149,7 @@ class CoursesController extends Controller
     public function actionUnitOptions($id)
     {
         Yii::$app->response->format = Response::FORMAT_JSON;
-        if (!CourseAccess::canUseUnit($id))
-            return ['brokers' => [], 'teachers' => [], 'lessons' => []];
-        $brokers = [];
-        $brokerQuery = Brokers::find()->where(['college' => $id, 'status' => '1']);
-        if (CourseAccess::role() === 'broker') {
-            $own = CourseAccess::broker();
-            $brokerQuery->andWhere(['_id' => $own === null ? null : $own->_id]);
-        }
-        foreach ($brokerQuery->all() as $broker) {
-            $ci = is_array($broker->connector_info) ? $broker->connector_info : [];
-            $name = trim((isset($ci['first_name']) ? $ci['first_name'] : '') . ' ' . (isset($ci['last_name']) ? $ci['last_name'] : ''));
-            if ((string) $broker->type === '1' && isset($broker->company_info['company_title']))
-                $name .= ' (شرکت ' . $broker->company_info['company_title'] . ')';
-            $contracts = [];
-            foreach ((array) $broker->contracts as $contract)
-                if (is_array($contract) && isset($contract['id']))
-                    $contracts[] = ['id' => (string) $contract['id'], 'title' => (isset($contract['title']) ? (string) $contract['title'] : '') . (isset($contract['share']) ? ' (' . $contract['share'] . ' درصد)' : '')];
-            if (empty($contracts))
-                continue; // بدون قرارداد، دوره قابل ثبت نیست (سرور هم قرارداد را الزامی می‌داند)
-            $brokers[] = ['id' => (string) $broker->_id, 'name' => $name !== '' ? $name : 'کارگزار بدون نام', 'contracts' => $contracts];
-        }
-        $teachers = [];
-        foreach (Teachers::find()->select(['first_name', 'last_name'])->where(['colleges' => $id])->all() as $teacher)
-            $teachers[] = ['id' => (string) $teacher->_id, 'name' => trim($teacher->first_name . ' ' . $teacher->last_name)];
-        $lessons = [];
-        foreach (Lessons::find()->select(['title'])->where(['college' => $id])->all() as $lesson)
-            $lessons[] = ['id' => (string) $lesson->_id, 'name' => (string) $lesson->title];
-        return ['brokers' => $brokers, 'teachers' => $teachers, 'lessons' => $lessons];
+        return CourseOptions::unitOptions($id);
     }
 
     // ================================================================== ثبت و ویرایش
@@ -614,148 +588,56 @@ class CoursesController extends Controller
 
     // ================================================================== کمکی
 
-    /**
-     * کد مجوز = کد واحد + شمارنده‌ی سراسری (اتمیک).
-     */
+    // کمکی‌های مشترک با دوره‌های میان‌مدت در CourseOptions
+
     private function assignLicenseCode(Courses $model)
     {
-        $unit = Colleges::findOne($model->college);
-        if ($unit === null || !is_scalar($unit->prefix) || (string) $unit->prefix === '')
-            return false;
-        $doc = Yii::$app->mongodb->getCollection(['eec', 'generals'])
-            ->findAndModify(['type' => 'license_code'], ['$inc' => ['data' => 1]], ['new' => true]);
-        if (!isset($doc['data']))
-            return false;
-        $model->license_code = $unit->prefix . '-' . (int) $doc['data'];
-        return true;
+        return CourseOptions::assignLicenseCode($model);
     }
 
     private function selectableUnits()
     {
-        $titles = UsersDirectory::collegeTitles();
-        if (CourseAccess::isAdmin())
-            return $titles;
-        $result = [];
-        foreach (CourseAccess::units() as $id)
-            if (isset($titles[$id]))
-                $result[$id] = $titles[$id];
-        return $result;
+        return CourseOptions::selectableUnits();
     }
 
-    /**
-     * واحدهای قابل انتخاب در فرم ثبت دوره: مدیر سیستم همه؛ بقیه فقط واحد خودشان.
-     */
     private function creatableUnits()
     {
-        $titles = UsersDirectory::collegeTitles();
-        if (CourseAccess::canChooseUnit())
-            return $titles;
-        $result = [];
-        foreach (CourseAccess::ownUnits() as $id)
-            if (isset($titles[$id]))
-                $result[$id] = $titles[$id];
-        return $result;
+        return CourseOptions::creatableUnits();
     }
 
     private function selectableBrokers()
     {
-        $query = Brokers::find()->select(['connector_info', 'company_info', 'type'])->orderBy(['_id' => SORT_DESC]);
-        if (CourseAccess::role() === 'broker')
-            return [];
-        if (!CourseAccess::isAdmin()) {
-            $units = CourseAccess::units();
-            $query->where(empty($units) ? ['_id' => null] : ['college' => $units]);
-        }
-        $result = [];
-        foreach ($query->all() as $broker) {
-            $ci = is_array($broker->connector_info) ? $broker->connector_info : [];
-            $result[(string) $broker->_id] = trim((isset($ci['first_name']) ? $ci['first_name'] : '') . ' ' . (isset($ci['last_name']) ? $ci['last_name'] : ''));
-        }
-        return $result;
+        return CourseOptions::selectableBrokers();
     }
 
     private function selectableTeachers()
     {
-        $query = Teachers::find()->select(['first_name', 'last_name'])->orderBy(['last_name' => SORT_ASC]);
-        if (!CourseAccess::isAdmin()) {
-            $units = CourseAccess::units();
-            $query->where(empty($units) ? ['_id' => null] : ['colleges' => $units]);
-        }
-        $result = [];
-        foreach ($query->all() as $teacher)
-            $result[(string) $teacher->_id] = trim($teacher->first_name . ' ' . $teacher->last_name);
-        return $result;
+        return CourseOptions::selectableTeachers();
     }
 
-    /**
-     * گزینه‌های «نوع ظرفیت» (بند ۶ صورتجلسه: «نامحدود» حذف). ظرفیت محدود فقط وقتی شناسه‌ی حساب واحد ثبت شده باشد.
-     */
     private function capacityTypes()
     {
-        $types = ['2' => 'محدود', '3' => 'سازمانی'];
-        if (CourseAccess::isAdmin())
-            return $types;
-        foreach (CourseAccess::units() as $id) {
-            $unit = Colleges::findOne($id);
-            if ($unit !== null && is_array($unit->financial_info) && !empty($unit->financial_info['id']))
-                return $types;
-        }
-        return ['3' => 'سازمانی'];
+        return CourseOptions::capacityTypes();
     }
 
     private function namesById($class, array $ids, $field = null)
     {
-        $ids = array_values(array_unique(array_filter($ids, function ($id) {
-            return is_string($id) && preg_match('/^[a-f0-9]{24}$/i', $id);
-        })));
-        if (empty($ids))
-            return [];
-        $result = [];
-        foreach ($class::find()->where(['_id' => $ids])->all() as $model)
-            $result[(string) $model->_id] = $field !== null ? (string) $model->$field : trim($model->first_name . ' ' . $model->last_name);
-        return $result;
+        return CourseOptions::namesById($class, $ids, $field);
     }
 
     private function brokerNames(array $ids)
     {
-        $ids = array_values(array_unique(array_filter($ids, function ($id) {
-            return is_string($id) && preg_match('/^[a-f0-9]{24}$/i', $id);
-        })));
-        if (empty($ids))
-            return [];
-        $result = [];
-        foreach (Brokers::find()->select(['connector_info'])->where(['_id' => $ids])->asArray()->all() as $broker) {
-            $ci = isset($broker['connector_info']) && is_array($broker['connector_info']) ? $broker['connector_info'] : [];
-            $result[(string) $broker['_id']] = trim((isset($ci['first_name']) ? $ci['first_name'] : '') . ' ' . (isset($ci['last_name']) ? $ci['last_name'] : ''));
-        }
-        return $result;
+        return CourseOptions::brokerNames($ids);
     }
 
     private function memberCounts(array $courseIds)
     {
-        if (empty($courseIds))
-            return [];
-        $result = [];
-        foreach (Users::getCollection()->aggregate([
-            ['$match' => ['courses._id' => ['$in' => $courseIds]]],
-            ['$project' => ['courses._id' => 1]],
-            ['$unwind' => '$courses'],
-            ['$match' => ['courses._id' => ['$in' => $courseIds]]],
-            ['$group' => ['_id' => '$courses._id', 'count' => ['$sum' => 1]]],
-        ]) as $row)
-            $result[(string) $row['_id']] = (int) $row['count'];
-        return $result;
+        return CourseOptions::memberCounts($courseIds);
     }
 
     private function sendXlsx(XlsxWriter $writer, $name)
     {
-        $path = Yii::getAlias('@runtime') . '/' . $name . '-' . bin2hex(random_bytes(6)) . '.xlsx';
-        $writer->save($path);
-        $response = Yii::$app->response->sendFile($path, $name . '-' . UsersDirectory::jdate('Y-m-d-H-i', time(), 'en') . '.xlsx');
-        $response->on(Response::EVENT_AFTER_SEND, function () use ($path) {
-            @unlink($path);
-        });
-        return $response;
+        return CourseOptions::sendXlsx($writer, $name);
     }
 
     /**

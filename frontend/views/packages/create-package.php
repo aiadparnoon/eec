@@ -1,1477 +1,341 @@
 <?php
-$this->title = 'ثبت دوره جامع و یکساله';
-
-use frontend\controllers\DashboardController;
-use yii\helpers\ArrayHelper;
-use yii\helpers\Url;
-use yii\web\View;
-use yii\widgets\ActiveForm;
-use frontend\assets\Select2Asset;
-use frontend\assets\SingleAsset;
-use app\models\Courses;
-use app\models\Brokers;
-use frontend\controllers;
-use yii\widgets\ListView;
+/**
+ * ثبت دوره‌ی میان‌مدت. همه‌ی قواعد سمت سرور در PackageForm تکرار می‌شوند؛ این‌جا برای راهنمایی کاربر است.
+ *
+ * @var $this yii\web\View
+ * @var $units array واحدهای قابل انتخاب (مدیر سیستم: همه؛ بقیه: واحد خودشان)
+ * @var $servers array سرورهای فعال کلاس آنلاین
+ * @var $capacityTypes array
+ */
+use app\components\CourseAccess;
+use app\components\PackageForm;
+use app\components\ShortCourseForm;
+use app\models\ClassroomServers;
+use frontend\assets\DateRangeAsset;
+use frontend\assets\InputGuardAsset;
+use frontend\assets\SelectSearchAsset;
+use frontend\controllers\CourseMembersController;
 use mihaildev\ckeditor\CKEditor;
+use yii\helpers\Html;
+use yii\helpers\Json;
+use yii\helpers\Url;
 
-SingleAsset::register($this);
-Select2Asset::register($this);
-// وقتی ثبت دوره به‌خاطر خطای اعتبارسنجی fail می‌شه، کنترلر همین ویو رو دوباره
-// با همون مدل (شامل مقادیر واردشده توسط کاربر + خطاهای دقیق هر فیلد) رندر
-// می‌کنه؛ در حالت عادی (بار اول باز کردن صفحه) مدلی پاس داده نمی‌شه و طبق
-// روال قبلی یک مدل تازه ساخته می‌شه. (2026-08-27)
-if (!isset($model)) {
-    $model = new Courses();
-}
-$model->scenario = Courses::SCENARIO_CREATE_PACKAGE;
-$front = Yii::getAlias('@front');
-// «محتوا محور» دیگر برای دوره‌های جدید قابل انتخاب نیست، پس از این لیست حذف
-// شده (2026-08-27) - سمت سرور هم توسط Courses::validateContentTypeNotDisabled()
-// اجرا می‌شه.
-$courseType = array(
-    '1' => 'غیر حضوری',
-    '2' => 'نیمه حضوری',
-    '4' => ' حضوری',
-);
-$type = array(
-    '2' => 'دوره میان مدت (بین ۲۱ تا ۲۵۰ ساعت)',
-    '3' => 'دوره بلند مدت (بین ۲۵۱ تا ۳۵۰ ساعت)',
-);
+$this->title = 'ثبت دوره‌ی میان‌مدت';
+DateRangeAsset::register($this);
+SelectSearchAsset::register($this);
+InputGuardAsset::register($this);
 
-if (Yii::$app->session->has('status')) {
-    if (Yii::$app->session->get('status') == '1')
-        $script = <<< JS
-    toastr.success("دوره مورد نظر ثبت گردید", {
-            positionClass: "toast-top-center",
-            containerId: "toast-top-center",
-            "closeButton": "true"
-        });
-JS;
-    else if (Yii::$app->session->get('status') == '2')
-        $script = <<< JS
-    toastr.error("خطایی رخ داده است، لطفا مجددا تلاش کنید", {
-            positionClass: "toast-top-center",
-            containerId: "toast-top-center",
-            "closeButton": "true"
-        });
-JS;
-    else if (Yii::$app->session->get('status') == '3')
-        $script = <<< JS
-    toastr.error("شماره همراه وارد شده تکراری می باشد", {
-            positionClass: "toast-top-center",
-            containerId: "toast-top-center",
-            "closeButton": "true"
-        });
-JS;
-    else if (Yii::$app->session->get('status') == '4')
-        $script = <<< JS
-    toastr.success("دوره مورد نظر ویرایش گردید", {
-            positionClass: "toast-top-center",
-            containerId: "toast-top-center",
-            "closeButton": "true"
-        });
-JS;
-    else if (Yii::$app->session->get('status') == '5')
-        $script = <<< JS
-    toastr.success("رمز عبور دوره مورد نظر بازنشانی گردید", {
-            positionClass: "toast-top-center",
-            containerId: "toast-top-center",
-            "closeButton": "true"
-        });
-JS;
-    else if (Yii::$app->session->get('status') == '6')
-        $script = <<< JS
-    toastr.success("وضعیت دوره مورد نظر تغییر یافت", {
-            positionClass: "toast-top-center",
-            containerId: "toast-top-center",
-            "closeButton": "true"
-        });
-JS;
-    $this->registerJs($script);
-    Yii::$app->session->remove('status');
+$flash = Yii::$app->session->getFlash(CourseMembersController::FLASH);
+if (is_array($flash) && isset($flash['message'])) {
+    $type = in_array($flash['type'], ['success', 'error', 'warning', 'info'], true) ? $flash['type'] : 'info';
+    $this->registerJs("toastr['$type'](" . Json::htmlEncode($flash['message']) . ", '', {positionClass: 'toast-top-center', closeButton: true, timeOut: 9000, escapeHtml: true});", \yii\web\View::POS_END);
 }
 
-$url = Url::toRoute('/packages/show_courses');
-$_csrf = Yii::$app->request->getCsrfToken();
-$ajax = <<<JS
+$isAdmin = CourseAccess::isAdmin();
+$isBroker = CourseAccess::role() === 'broker';
+$fixedUnit = !CourseAccess::canChooseUnit() && count($units) === 1 ? [key($units), current($units)] : null;
+$serverOptions = $servers + [ClassroomServers::NONE => 'هیچ‌کدام (برگزاری در سامانه‌ی دیگر / بدون کلاس آنلاین)'];
+$config = Json::htmlEncode([
+    'optionsUrl' => Url::to(['unit-options']),
+    'minHours' => PackageForm::MIN_HOURS,
+    'maxInstallments' => PackageForm::MAX_INSTALLMENTS,
+]);
+$this->registerJs(<<<JS
+(function () {
+    var cfg = $config, form = $('#package-form'), unitData = {brokers: [], teachers: [], lessons: []};
+    var fa = function (n) { return String(n).replace(/\d/g, function (d) { return '۰۱۲۳۴۵۶۷۸۹'[d]; }); };
+    var money = function (n) { return fa(Number(n || 0).toLocaleString('en-US')); };
+    var digits = function (v) { return parseInt(String(v || '').replace(/[^\d]/g, ''), 10) || 0; };
+    var esc = function (t) { return $('<div>').text(t).html(); };
+    function fill(select, items, prompt) {
+        select.empty().append($('<option>').val('').text(prompt));
+        $.each(items, function (i, item) { select.append($('<option>').val(item.id).text(item.name)); });
+        select.prop('disabled', items.length === 0).trigger('change.select2');
+    }
+    function courseRange() { return {from: $('#pkg-start').val(), to: $('#pkg-end').val()}; }
+    function datePicker(input, bounds) {
+        if (!$.fn.flatpickr) return;
+        if (input._flatpickr) input._flatpickr.destroy();
+        $(input).flatpickr({locale: 'fa', dateFormat: 'Y-m-d', altInput: true, altFormat: 'Y/m/d', disableMobile: true, minDate: bounds.from || null, maxDate: bounds.to || null});
+    }
 
-$(".message-actions").click(function() {
-    $(".add-dob").flatpickr({
-        monthSelectorType: "static",
-        locale: "fa",
-        altInput: true,
-        altFormat: "Y/m/d",
-        disableMobile: true,
-        allowInput:true,
+    // --- واحد → کارگزاران، مدرسان و دروس
+    form.on('change', '#pkg-unit', function () {
+        var id = $(this).val();
+        $('#pkg-lessons').empty().trigger('change');
+        fill($('#pkg-broker'), [], 'بدون کارگزار');
+        fill($('#pkg-contract'), [], 'ابتدا کارگزار را انتخاب کنید');
+        if (!id) return;
+        $.getJSON(cfg.optionsUrl, {id: id}).done(function (data) {
+            unitData = data;
+            fill($('#pkg-broker'), data.brokers, data.brokers.length ? 'بدون کارگزار' : 'کارگزاری با قرارداد برای این واحد ثبت نشده');
+            if (data.brokers.length === 1 && $('#pkg-broker').data('force')) $('#pkg-broker').val(data.brokers[0].id).trigger('change');
+            var lessons = $('#pkg-lessons').empty();
+            $.each(data.lessons, function (i, item) { lessons.append($('<option>').val(item.id).text(item.name)); });
+            lessons.prop('disabled', data.lessons.length === 0).trigger('change');
+        });
     });
-});
-
-if($('#course-type').val() == '3') {
-    $(".hide-on-content").hide();
-}
-
-$(document).on('change','#lessons',function(e) {
-    e.preventDefault();
-    var id = $(this).val();
-
-
-    $.ajax({
-        url:'$url',
-        type:'POST',
-        data:{id:id, _csrf: yii.getCsrfToken()},
-        success:function(data) {
-            var main_data = JSON.parse(data);
-            var container = $("#show_courses");
-
-            var newIds = new Set();
-            var existingIds = new Set();
-            
-
-            // Create a set to keep track of unique identifiers in the existing container
-
-            // Iterate over existing items in the container and add their IDs to the set
-            container.children().each(function () {
-                var itemId = $(this).attr('id'); // Adjust 'data-id' to your actual identifier attribute
-                existingIds.add(itemId);
-            });
-
-            // Append new data to the container
-            container.append(main_data.list);
-
-            // Create a set to keep track of unique identifiers in the new data
-
-            // Iterate over the new data
-            container.children().each(function () {
-                var itemId = $(this).attr('id'); // Adjust 'data-id' to your actual identifier attribute
-                if (newIds.has(itemId)) {
-                    // If the item is a duplicate, remove it
-                    $(this).remove();
-                } else {
-                    // If the item is not a duplicate, add its ID to the set
-                    newIds.add(itemId);
-                }
-            });
-
-            // Remove items from the container that are not present in both new data and existing container
-            container.children().each(function () {
-                var itemId = $(this).attr('id'); // Adjust 'data-id' to your actual identifier attribute
-                 if(!main_data.list.join(' ').includes(itemId)) {
-                        $("#" + itemId).remove();
-                }
-            });
-
-
-            $(".select2").each(function () {
-                var targetInput = $(this);
-                var select2Input = targetInput.select2({
-                    placeholder: "لطفا انتخاب کنید",
-                    dropdownParent: targetInput.hasClass("none-parent") ? null : targetInput.parent(),
-                    value: "borna",
-                });
-             });
-
-             $(".dob-picker").each(function () {
-                $(this).flatpickr({
-                    monthSelectorType: "static",
-                    locale: "fa",
-                    altInput: true,
-                    altFormat: "Y/m/d",
-                    disableMobile: true,
-                    allowInput:true,
-                });
-            });
-
-            console.log(main_data?.list?.length, 'lengthy')
-
-            $('.submit-course-btn').attr("disabled", main_data?.list?.length == 0)
-        }
+    form.on('change', '#pkg-broker', function () {
+        var id = $(this).val(), broker = null;
+        $.each(unitData.brokers, function (i, b) { if (b.id === id) broker = b; });
+        fill($('#pkg-contract'), broker ? $.map(broker.contracts, function (c) { return {id: c.id, name: c.title}; }) : [], id ? 'لطفاً قرارداد را انتخاب کنید' : 'ابتدا کارگزار را انتخاب کنید');
+        $('#pkg-contract').prop('required', !!id);
     });
 
-})
-JS;
-$this->registerJs($ajax);
-
-$contract_file = <<<JS
-// ===== اعتبارسنجی تاریخ اقساط با در نظر گرفتن تاریخ شمسی =====
-function initInstallmentPickers() {
-    // حذف نمونه‌های قبلی flatpickr برای جلوگیری از تداخل
-    $('.add-dob').each(function() {
-        if ($(this).data('flatpickr')) {
-            $(this).data('flatpickr').destroy();
-        }
+    // --- دروس انتخاب‌شده → کارت هر درس
+    form.on('change', '#pkg-lessons', function () {
+        var selected = $(this).val() || [], box = $('#pkg-lesson-cards');
+        box.find('.js-lesson').each(function () { if (selected.indexOf($(this).data('id')) < 0) $(this).remove(); });
+        $.each(selected, function (i, id) {
+            if (box.find('.js-lesson[data-id="' + id + '"]').length) return;
+            var title = $('#pkg-lessons option[value="' + id + '"]').text();
+            var teachers = '<option value="">جست‌وجو و انتخاب مدرس</option>' + $.map(unitData.teachers, function (t) { return '<option value="' + esc(t.id) + '">' + esc(t.name) + '</option>'; }).join('');
+            var card = $('<div class="col-md-6 col-xl-4 js-lesson"><div class="border rounded p-3 h-100">' +
+                '<h6 class="mb-3"><i class="bx bx-book-open me-1"></i><span class="js-title"></span></h6>' +
+                '<input type="hidden" class="js-id">' +
+                '<div class="mb-2"><label class="form-label small">مدرس *</label><select class="form-select js-teacher" required>' + teachers + '</select></div>' +
+                '<div class="row g-2"><div class="col-6"><label class="form-label small">تاریخ شروع *</label><input type="text" class="form-control js-from" data-f="from" required autocomplete="off"></div>' +
+                '<div class="col-6"><label class="form-label small">تاریخ اتمام *</label><input type="text" class="form-control js-to" data-f="to" required autocomplete="off"></div>' +
+                '<div class="col-6"><label class="form-label small">ساعت شروع *</label><input type="text" class="form-control js-time" required placeholder="18:30" pattern="([01]?[0-9]|2[0-3]):[0-5][0-9]" dir="ltr" maxlength="5"></div>' +
+                '<div class="col-6"><label class="form-label small">مدت (ساعت) *</label><input type="text" class="form-control js-hours" required inputmode="numeric" data-input="digits" dir="ltr" maxlength="3"></div>' +
+                '<div class="col-12"><label class="form-label small">مخفی کردن آرشیو</label><select class="form-select js-archive"><option value="0">خیر</option><option value="1">بله</option></select></div></div>' +
+                '</div></div>');
+            card.attr('data-id', id).find('.js-title').text(title);
+            card.find('.js-id').val(id);
+            box.append(card);
+            EecSelect.init(card[0]);
+            card.find('[data-f="from"], [data-f="to"]').each(function () { datePicker(this, courseRange()); });
+        });
+        box.find('.js-lesson').each(function (i) {
+            var c = $(this);
+            c.find('.js-id').attr('name', 'Courses[lessons][' + i + '][_id]');
+            c.find('.js-teacher').attr('name', 'Courses[lessons][' + i + '][teachers]');
+            // فقط فیلد اصلی (flatpickr یک فیلد نمایشی با همان کلاس‌ها می‌سازد)
+            c.find('[data-f="from"]').attr('name', 'Courses[lessons][' + i + '][date][from]');
+            c.find('[data-f="to"]').attr('name', 'Courses[lessons][' + i + '][date][to]');
+            c.find('.js-time').attr('name', 'Courses[lessons][' + i + '][date][time]');
+            c.find('.js-hours').attr('name', 'Courses[lessons][' + i + '][date][duration]');
+            c.find('.js-archive').attr('name', 'Courses[lessons][' + i + '][hide_archive]');
+        });
+        $('#pkg-lessons-empty').toggle(selected.length === 0);
     });
 
-    // مقداردهی مجدد با اعتبارسنجی
-    $('.add-dob').flatpickr({
-        monthSelectorType: "static",
-        locale: "fa",
-        altInput: true,
-        altFormat: "Y/m/d",
-        disableMobile: true,
-        allowInput: true,
-        onClose: function(selectedDates, dateStr, instance) {
-            var endDateInput = document.getElementById('end-date');
-            if (!endDateInput || !endDateInput.value) {
-                return; // اگر تاریخ اتمام خالی است، کاری نکن
-            }
+    // --- ظرفیت
+    form.on('change', '#pkg-capacity', function () {
+        var type = $(this).val();
+        $('#pkg-capacity-number-wrap').toggle(type === '2');
+        $('#pkg-capacity-number').prop('required', type === '2');
+        $('#pkg-contract-file-wrap').toggle(type === '3');
+        $('#pkg-contract-file').prop('required', type === '3');
+    });
+    form.on('input change', '#pkg-duration', function () {
+        var v = parseInt(this.value, 10), msg = isNaN(v) ? 'مدت دوره را وارد کنید' : (v < cfg.minHours ? 'دوره‌ی میان‌مدت حداقل ' + fa(cfg.minHours) + ' ساعت است؛ دوره‌ی کوتاه‌تر را از بخش کوتاه‌مدت ثبت کنید' : '');
+        this.setCustomValidity(msg);
+        $('#pkg-duration-help').text(msg || ('حداقل ' + fa(cfg.minHours) + ' ساعت')).toggleClass('text-danger', !!msg);
+    });
 
-            // گرفتن نمونه flatpickr نصب شده روی تاریخ اتمام
-            var endPicker = endDateInput._flatpickr;
-            if (!endPicker) {
-                return; // در صورت نبود نمونه، از انجام اعتبارسنجی صرف‌نظر کن
-            }
-
-            // تبدیل تاریخ اتمام (که شمسی است) به Date میلادی
-            var endDate = endPicker.parseDate(endDateInput.value);
-            if (!endDate) {
+    // --- تاریخ دوره: اتمام حداقل یک روز بعد؛ تاریخ دروس و اقساط داخل بازه‌ی دوره
+    if ($.fn.flatpickr) {
+        var opts = {locale: 'fa', dateFormat: 'Y-m-d', altInput: true, altFormat: 'Y/m/d', disableMobile: true};
+        $('#pkg-start, #pkg-end').flatpickr($.extend({}, opts, {onChange: onRange}));
+        EecDateRange.bind(document.getElementById('pkg-start'), document.getElementById('pkg-end'));
+    }
+    function onRange() {
+        var r = courseRange();
+        form.find('[data-f="from"], [data-f="to"], [data-f="deadline"]').each(function () {
+            if (this._flatpickr) { this._flatpickr.set('minDate', r.from || null); this._flatpickr.set('maxDate', r.to || null); }
+        });
+        var s = $('#pkg-start')[0]._flatpickr, e = $('#pkg-end')[0]._flatpickr;
+        if (s && e && s.selectedDates[0] && e.selectedDates[0]) {
+            var days = Math.floor((e.selectedDates[0].getTime() - s.selectedDates[0].getTime()) / 86400000);
+            if (days >= 1) {
+                var d = new Date(s.selectedDates[0].getTime() + Math.floor(days / 4) * 86400000);
+                $('#pkg-deadline').val(e.formatDate(typeof JDate === 'function' ? new JDate(d) : d, 'Y/m/d'));
                 return;
             }
-
-            var selectedDate = selectedDates[0]; // تاریخ انتخاب شده برای قسط (میلادی)
-
-            // مقایسه
-            if (selectedDate && selectedDate > endDate) {
-                toastr.error("تاریخ پرداخت قسط نباید از تاریخ اتمام دوره بزرگ‌تر باشد", {
-                    positionClass: "toast-top-center",
-                    containerId: "toast-top-center",
-                    closeButton: true
-                });
-                // پاک کردن فیلد قسط
-                instance.clear();
-                instance.input.value = '';
-            }
         }
+        $('#pkg-deadline').val('');
+    }
+
+    // --- شرایط اقساطی: مجموع = شهریه‌ی قابل پرداخت، سررسید داخل بازه‌ی دوره
+    function payable() { var d = digits($('#pkg-discount').val()); return d > 0 ? d : digits($('#pkg-price').val()); }
+    function total() {
+        var rows = form.find('.js-installment'), sum = digits($('#pkg-prepayment').val());
+        rows.each(function () { sum += digits($(this).find('.js-amount').val()); });
+        var active = rows.length > 0 || digits($('#pkg-prepayment').val()) > 0, diff = payable() - sum, box = $('#pkg-installments-total');
+        box.toggle(active);
+        box.find('.js-sum').text(money(sum));
+        box.find('.js-payable').text(money(payable()));
+        box.find('.js-diff').text(diff === 0 ? 'برابر با شهریه' : (diff > 0 ? 'کسری ' + money(diff) : 'مازاد ' + money(-diff)) + ' تومان');
+        box.removeClass('alert-success alert-danger').addClass(diff === 0 ? 'alert-success' : 'alert-danger');
+        var bad = active && diff !== 0;
+        $('#pkg-prepayment')[0].setCustomValidity(bad ? 'مجموع پیش‌پرداخت و اقساط باید دقیقاً برابر شهریه باشد' : '');
+    }
+    form.on('click', '.js-add-installment', function () {
+        if (form.find('.js-installment').length >= cfg.maxInstallments) return;
+        var row = $($('#pkg-installment-template').html());
+        $('#pkg-installments').append(row);
+        datePicker(row.find('[data-f="deadline"]')[0], courseRange());
+        renumber(); total();
     });
-}
-
-// ===== مدیریت دکمه افزودن قسط بر اساس وجود تاریخ اتمام =====
-$(document).ready(function() {
-    // اجرای اولیه برای فیلدهای موجود
-    initInstallmentPickers();
-
-    var addBtn = $('[data-repeater-create]');
-
-    // تابع به‌روزرسانی وضعیت دکمه
-    function toggleAddButton() {
-        var endDate = $('#end-date').val().trim();
-        addBtn.prop('disabled', !endDate);
-    }
-
-    // اجرای اولیه (غیرفعال کردن)
-    toggleAddButton();
-
-    // رویدادهای تغییر تاریخ اتمام
-    $('#end-date').on('change input', function() {
-        toggleAddButton();
-    });
-
-    // پس از افزودن قسط جدید توسط دکمه، دوباره flatpickr را روی فیلدهای جدید مقداردهی کن
-    $(document).on('click', '[data-repeater-create]', function() {
-        // تاخیر برای اطمینان از ایجاد المان‌های جدید
-        setTimeout(function() {
-            initInstallmentPickers();
-        }, 200);
-    });
-});
-JS;
-$this->registerJs($contract_file);
-
-// ===== نمایش پیغام خطای اعتبارسنجی با رنگ قرمز زیر هر اینپوت =====
-// این اسکریپت به هیچ رفتار قبلی دست نمی‌زند (فقط اضافه‌ست): همون required
-// و oninvalid/oninput اصلی روی خود اینپوت‌ها دقیقاً مثل قبل کار می‌کنن (از جمله
-// تمرکز مرورگر روی اولین فیلد نامعتبر و بالن پیش‌فرض مرورگر). این اسکریپت فقط
-// وقتی هر فیلد نامعتبر بشه، همون پیغام (validationMessage) رو به رنگ قرمز
-// داخل همون <div class="help-block"></div> که Yii از قبل کنار هر اینپوت
-// می‌سازه می‌نویسه، و به‌محض معتبر شدن دوباره (تایپ/تغییر)، پاکش می‌کنه.
-//
-// به‌جای بستن رویداد به تک‌تک اینپوت‌ها (که موقع لود صفحه ثابتن)، از
-// event capturing روی خود فرم استفاده شده - چون رویداد invalid حباب
-// (bubble) نمی‌کنه اما در فاز capture از فرم عبور می‌کنه. این باعث میشه
-// فیلدهایی که بعداً و به‌صورت پویا توسط اسکریپت‌های دیگه ساخته/جایگزین
-// می‌شن هم درست پوشش داده بشن، بدون هیچ تغییری در اون اسکریپت‌ها؛ دو
-// نمونه‌ی واقعی که همین الان روی این فرم وجود داره:
-//   ۱) فیلد آپلود قرارداد (#contract_file) که required بودنش با انتخاب
-//      نوع ظرفیت به‌صورت پویا (true/false) عوض می‌شه.
-//   ۲) دو فیلد تاریخ (تاریخ شروع/اتمام دوره) که flatpickr با altInput
-//      روی اونها فعاله: flatpickr خود اینپوت اصلی رو به type="hidden"
-//      تبدیل می‌کنه (که دیگه مشمول اعتبارسنجی مرورگر نیست) و یک اینپوت
-//      نمایشی جدید کنارش می‌سازه که واقعاً اعتبارسنجی و رویداد invalid
-//      روی همونه - این اینپوت جدید همون کسیه که بلافاصله قبل از
-//      .help-block قرار می‌گیره، پس همچنان به‌درستی هدف قرار می‌گیره.
-// خوندن validationMessage داخل یک setTimeout(0) به تعویق افتاده تا
-// oninvalid اصلی (که پیغام فارسی رو با setCustomValidity ست می‌کنه) قبل
-// از خوندن پیغام، حتماً اجرا شده باشه.
-//
-// نکته‌ی اضافه درباره‌ی حالت flatpickr (مورد ۲ بالا): چون اینپوت نمایشی
-// جدیدی که flatpickr می‌سازه خودش هیچ oninvalid ندازه (فقط اینپوت اصلیِ
-// حالا-مخفی‌شده این رو داره)، پیغام پیش‌فرض انگلیسی مرورگر رو برمی‌گردونه.
-// برای همین، وقتی خود فیلدِ نامعتبر oninvalid نداشته باشه، پیغام فارسی رو
-// از روی همون oninvalid اینپوت اصلی (که flatpickr درست قبل از اینپوت
-// نمایشی جدید نگه می‌داره) استخراج می‌کنیم - بدون هیچ تغییری در flatpickr
-// یا خود اینپوت اصلی.
-$inlineErrors = <<<JS
-$(document).ready(function() {
-    var form = document.getElementById('create-package-form');
-    if (!form) {
-        return;
-    }
-
-    function getHelpBlock(field) {
-        // معمولاً .help-block دقیقاً همسایه‌ی بعدیه؛ اما بعضی ویجت‌ها (مثل
-        // select2 روی فیلد دانشکده) یک span پوششی بین اینپوت اصلی و
-        // .help-block اضافه می‌کنن، پس تا ۲ همسایه‌ی بعدی رو هم چک می‌کنیم.
-        var el = field.nextElementSibling;
-        for (var i = 0; i < 3 && el; i++) {
-            if (el.classList && el.classList.contains('help-block')) {
-                return el;
-            }
-            el = el.nextElementSibling;
-        }
-        return null;
-    }
-
-    function extractCustomMessage(el) {
-        if (!el || typeof el.getAttribute !== 'function') {
-            return null;
-        }
-        var attr = el.getAttribute('oninvalid');
-        if (!attr) {
-            return null;
-        }
-        var match = attr.match(/setCustomValidity\(['"]([^'"]*)['"]\)/);
-        return match ? match[1] : null;
-    }
-
-    form.addEventListener('invalid', function(e) {
-        var field = e.target;
-        setTimeout(function() {
-            var helpBlock = getHelpBlock(field);
-            if (!helpBlock) {
-                return;
-            }
-            var message = field.validationMessage;
-            if (!field.hasAttribute('oninvalid')) {
-                var customMessage = extractCustomMessage(field.previousElementSibling);
-                if (customMessage) {
-                    message = customMessage;
-                }
-            }
-            helpBlock.textContent = message;
-            helpBlock.style.color = '#dc3545';
-        }, 0);
-    }, true);
-
-    function clearIfValid(e) {
-        var field = e.target;
-        if (typeof field.checkValidity !== 'function' || !field.checkValidity()) {
-            return;
-        }
-        var helpBlock = getHelpBlock(field);
-        if (helpBlock) {
-            helpBlock.textContent = '';
-        }
-    }
-
-    form.addEventListener('input', clearIfValid, true);
-    form.addEventListener('change', clearIfValid, true);
-});
-JS;
-$this->registerJs($inlineErrors);
-
-// ===== قیمت با تخفیف نباید بیشتر از قیمت اصلی باشد =====
-// این فقط یک هشدار زودهنگام سمت مرورگره (تجربه‌ی کاربری بهتر)؛ منبع واقعی و
-// تضمین‌شده همون قانون سمت سرور Courses::validateDiscountNotAbovePrice()
-// هست که مساوی بودن (یعنی «بدون تخفیف») رو مجاز می‌دونه و فقط بیشتر بودن
-// واقعی رو رد می‌کنه - این اسکریپت هم دقیقاً همون منطق رو پیاده می‌کنه تا
-// پیغام زودتر (قبل از سابمیت) و از طریق همون مکانیزم $inlineErrors بالا
-// (که به رویداد invalid گوش می‌ده) به رنگ قرمز زیر فیلد نشون داده بشه.
-$discountCheck = <<<JS
-$(document).ready(function() {
-    var priceInput = document.getElementById('courses-price');
-    var discountInput = document.getElementById('courses-discount_price');
-    if (!priceInput || !discountInput) {
-        return;
-    }
-
-    function checkDiscount() {
-        var price = parseFloat(priceInput.value);
-        var discount = parseFloat(discountInput.value);
-        if (discountInput.value.trim() === '' || isNaN(discount) || isNaN(price)) {
-            discountInput.setCustomValidity('');
-            return;
-        }
-        if (discount > price) {
-            discountInput.setCustomValidity('قیمت با تخفیف نمی‌تواند بیشتر از قیمت اصلی باشد');
-        } else {
-            discountInput.setCustomValidity('');
-        }
-    }
-
-    priceInput.addEventListener('input', checkDiscount);
-    priceInput.addEventListener('change', checkDiscount);
-    discountInput.addEventListener('input', checkDiscount);
-    discountInput.addEventListener('change', checkDiscount);
-    discountInput.addEventListener('blur', function() {
-        checkDiscount();
-        if (!discountInput.validity.valid) {
-            discountInput.reportValidity();
-        }
-    });
-});
-JS;
-$this->registerJs($discountCheck);
-
-if (Yii::$app->user->identity->role != 'user' || Yii::$app->user->identity->role != 'cnt') {
-    $collegeId = $myCollege['0']->_id;
-    $collegeScript = <<< JS
-    let capacity_type = $("#courses-student_capacity-type").val()
-$.get("/packages/brokers1", { id: "{$collegeId}", "capacity_type": capacity_type } )
-   .done(function(data) {
-   var main_data=JSON.parse(data);
-       $('#broker1').html(main_data.brokers);
-       $('#teachers1').html(main_data.teachers);
-       $('#lessons1').html(main_data.lessons);
-       $(".select2").each(function () {
-            var targetInput = $(this);
-            var select2Input = targetInput.select2({
-                placeholder: "لطفا انتخاب کنید",
-                dropdownParent: targetInput.hasClass("none-parent") ? null : targetInput.parent(),
-                value: "borna",
-            });
+    form.on('click', '.js-remove-installment', function () { $(this).closest('.js-installment').remove(); renumber(); total(); });
+    function renumber() {
+        form.find('.js-installment').each(function (i) {
+            $(this).find('.js-number').text(fa(i + 1));
+            $(this).find('[data-f="deadline"]').attr('name', 'Courses[installments][' + i + '][deadline]');
+            $(this).find('.js-amount').attr('name', 'Courses[installments][' + i + '][amount]');
         });
-   });
-JS;
-    $this->registerJs($collegeScript);
-}
-
-$input = <<< JS
-$(document).ready(function() {
-    // تابع اعتبارسنجی (بدون نمایش توستر در submit)
-    function validateDuration(value, showToast = true) {
-        let num = parseInt(value, 10);
-        let errorMsg = '';
-        
-        if (isNaN(num)) {
-            errorMsg = 'لطفا مدت زمان دوره را وارد کنید';
-        } else if (num > 350) {
-            errorMsg = 'امکان ثبت دوره بالای ۳۵۰ ساعت نمی باشد';
-        } else if (num < 25) {
-            errorMsg = 'برای ثبت دوره کمتر از ۲۵ ساعت از قسمت دوره های کوتاه مدت اقدام فرمائید';
-        }
-        
-        if (errorMsg) {
-            $('#duration')[0].setCustomValidity(errorMsg);
-            if (showToast) {
-                toastr.error(errorMsg, {
-                    positionClass: "toast-top-center",
-                    containerId: "toast-top-center",
-                    closeButton: true
-                });
-            }
-            return false;
-        } else {
-            $('#duration')[0].setCustomValidity('');
-            return true;
-        }
+        $('#pkg-prepayment').prop('required', form.find('.js-installment').length > 0);
     }
+    form.on('input change', '#pkg-price, #pkg-discount, #pkg-prepayment, .js-amount', total);
 
-    // فقط یک رویداد: خروج از فیلد (با نمایش توستر)
-    $('#duration').on('blur', function() {
-        validateDuration($(this).val(), true);
-    });
-
-    // هنگام ارسال فرم: فقط بررسی کن، توستر نمایش نده
-    $('form').on('submit', function(e) {
-        var isValid = validateDuration($('#duration').val(), false);
-        if (!isValid) {
-            e.preventDefault();
-            // اگر می‌خواهید پیغام خطا به صورت alert هم نشان دهید (اختیاری)
-            // alert($('#duration')[0].validationMessage);
-        }
-    });
-});
-JS;
-$this->registerJs($input);
-
-$calDate = <<< JS
-    
-JS;
-$this->registerJs($calDate);
-?>
-
-<?php
-
-$js = <<< JS
-$(document).ready(function() {
-    // نکته‌ی مهم (ریشه‌ی باگ «تاریخ اتمام دوره فعال نمی‌شه»):
-    // flatpickr (با altInput:true) اینپوت اصلیِ تاریخ شروع/اتمام
-    // (id="start-date" / id="end-date") رو به type="hidden" تبدیل می‌کنه و
-    // یک اینپوت نمایشیِ تازه (بدون id) درست بعدش اضافه می‌کنه. این اتفاق روی
-    // این صفحه ممکنه *بعد* از اجرای همین $(document).ready بیفته. نسخه‌ی
-    // قبلیِ این اسکریپت یک‌بار، همون لحظه‌ی اول، $('#from1 input')/
-    // $('#to1 input') رو می‌خوند و در startDate/endDate ذخیره می‌کرد؛ وقتی
-    // بعداً اینپوت نمایشیِ جدید ساخته می‌شد، اون متغیرهای قدیمی اصلاً ازش خبر
-    // نداشتن (jQuery چنین رفرنسی رو خودکار به‌روز نمی‌کنه) و disabled/value
-    // فقط روی اینپوت اصلیِ (حالا مخفیِ) قبلی اعمال می‌شد - نتیجه این بود که
-    // از دید کاربر، فیلد «تاریخ اتمام دوره» هیچ‌وقت فعال به نظر نمی‌رسید، چون
-    // خودِ اینپوت نمایشی که کاربر می‌بینه دست‌نخورده می‌موند.
-    // راه‌حل: دیگه رفرنس ثابتی نگه نمی‌داریم؛ هر بار اینپوت‌های واقعیِ داخل
-    // #from1/#to1 رو تازه می‌خونیم (startInputs/endInputs) و رویدادها هم -
-    // دقیقاً مثل فیکس قبلیِ پیغام‌های خطا (oninvalid) در بالای همین فایل -
-    // روی کانتینر ثابت #from1/#to1 به‌صورت delegated بسته می‌شن؛ این‌طوری
-    // فرقی نمی‌کنه اینپوت اصلی مخفی شده باشه یا اینپوت نمایشیِ جدید
-    // جایگزینش شده باشه. (2026-08-27)
-
-    var deadlineDate = $('#deadline-date');
-
-    function startInputs() { return $('#from1 input'); }
-    function endInputs() { return $('#to1 input'); }
-
-    // مقدار واقعی (dateFormat پیش‌فرض میلادی) همیشه روی اینپوت اصلی نگه
-    // داشته می‌شه؛ چون flatpickr اینپوت نمایشیِ altInput رو همیشه *بعد* از
-    // اینپوت اصلی اضافه می‌کنه، .first() همیشه دقیقاً همون اینپوت اصلی رو
-    // برمی‌گردونه، چه هنوز hidden نشده باشه چه شده باشه.
-    function currentStartVal() { return startInputs().first().val().trim(); }
-    function currentEndVal() { return endInputs().first().val().trim(); }
-
-    // غیرفعال کردن اولیه
-    endInputs().prop('disabled', true);
-    deadlineDate.prop('disabled', true);
-
-    // تابع برای اعتبارسنجی تاریخ اتمام
-    function validateEndDate() {
-        var startVal = currentStartVal();
-        var endVal = currentEndVal();
-
-        // اگر تاریخ شروع وجود ندارد
-        if (!startVal) {
-            endInputs().prop('disabled', true);
-            return false;
-        }
-
-        // اگر تاریخ اتمام خالی است
-        if (!endVal) {
-            deadlineDate.val('');
-            deadlineDate.prop('disabled', true);
-            return false;
-        }
-
-        var start = new Date(startVal);
-        var end = new Date(endVal);
-
-        // بررسی اعتبار
-        if (end <= start) {
-            // فقط یک بار پیام نشان بده
-            if (!endInputs().hasClass('error-shown')) {
-                endInputs().addClass('error-shown');
-            }
-            endInputs().val('');
-            deadlineDate.val('');
-            deadlineDate.prop('disabled', true);
-            return false;
-        } else {
-            // اگر تاریخ درست بود، کلاس خطا را حذف کن
-            endInputs().removeClass('error-shown');
-
-            // محاسبه deadline
-            calculateDeadline(start, end);
-            return true;
-        }
+    EecSelect.init(form[0]);
+    var unit = $('#pkg-unit');
+    if (unit.is('input') || (unit.find('option').length === 2 && !unit.val())) {
+        if (!unit.is('input')) unit.val(unit.find('option:last').val());
+        unit.trigger('change');
     }
-
-    // تابع محاسبه deadline
-    function calculateDeadline(start, end) {
-        var diff = end.getTime() - start.getTime();
-        var quarter = diff / 4;
-        var deadline = new Date(start.getTime() + quarter);
-
-        // فرمت تاریخ
-        var deadlineStr = deadline.getFullYear() + '/' +
-                         String(deadline.getMonth() + 1).padStart(2, '0') + '/' +
-                         String(deadline.getDate()).padStart(2, '0');
-
-        deadlineDate.val(deadlineStr);
-        deadlineDate.prop('disabled', false);
-    }
-
-    // رویداد تغییر تاریخ شروع - delegated روی کانتینر ثابت #from1 (نه خودِ
-    // اینپوت‌های داخلش)، تا چه اینپوت اصلیِ مخفی‌شده تغییر کنه چه اینپوت
-    // نمایشیِ altInput، درست کار کنه.
-    $('#from1').on('change input', 'input', function() {
-        var startVal = currentStartVal();
-
-        if (startVal) {
-            endInputs().prop('disabled', false);
-            endInputs().val('');
-            deadlineDate.val('');
-            deadlineDate.prop('disabled', true);
-        } else {
-            endInputs().prop('disabled', true);
-            endInputs().val('');
-            deadlineDate.val('');
-            deadlineDate.prop('disabled', true);
-        }
-
-        // اگر تاریخ اتمام پر شده بود، دوباره اعتبارسنجی کن
-        if (currentEndVal()) {
-            validateEndDate();
-        }
-    });
-
-    // چند رویداد برای تاریخ اتمام - این‌ها هم delegated روی #to1 هستن
-    $('#to1').on('change', 'input', validateEndDate);
-
-    // رویداد blur (وقتی از فیلد خارج می‌شود)
-    $('#to1').on('blur', 'input', function() {
-        if ($(this).val().trim()) {
-            validateEndDate();
-        }
-    });
-
-    // رویداد input (تایپ لحظه‌ای - اختیاری)
-    $('#to1').on('input', 'input', function() {
-        // فقط وقتی مقدار کامل به نظر می‌رسد اعتبارسنجی کن
-        if (currentEndVal().length >= 8) { // حداقل طول یک تاریخ
-            validateEndDate();
-        }
-    });
-
-    // وقتی فرم submit می‌شود
-    $('form').on('submit', function(e) {
-        var startVal = currentStartVal();
-        var endVal = currentEndVal();
-        var deadlineVal = deadlineDate.val().trim();
-
-        if (!startVal) {
-            e.preventDefault();
-            alert('لطفا تاریخ شروع را وارد کنید');
-            startInputs().first().focus();
-            return false;
-        }
-
-        if (!endVal) {
-            e.preventDefault();
-            alert('لطفا تاریخ اتمام را وارد کنید');
-            endInputs().first().focus();
-            return false;
-        }
-
-        if (!deadlineVal) {
-            e.preventDefault();
-            alert('لطفا منتظر بمانید تا مهلت ثبت عضو محاسبه شود');
-            return false;
-        }
-
-        // اعتبارسنجی نهایی
-        if (!validateEndDate()) {
-            e.preventDefault();
-            return false;
-        }
-    });
-});
-JS;
-
-$this->registerJs($js);
-
-?>
-
-<?php
-$jss = <<< JS
-$(document).ready(function() {
-    // تعریف متغیرها
-    var courseTypeSelect = $('#course-type');
-    var capacitySelect = $('.capacity_type');
-    var inPersonValue = "4"; // مقدار دوره حضوری
-    var unlimitedValue = "1"; // مقدار ظرفیت نامحدود
-    
-    // ایجاد یک آی‌دی یکتا اگر وجود نداشته باشد
-    if (!capacitySelect.attr('id')) {
-        capacitySelect.attr('id', 'capacity_type_' + Math.random().toString(36).substr(2, 9));
-    }
-    
-    var capacityTypeId = capacitySelect.attr('id');
-    
-    // ذخیره گزینه‌های اصلی ظرفیت
-    var originalCapacityOptions = capacitySelect.html();
-    
-    // تابع برای آپدیت گزینه‌های ظرفیت
-    function updateCapacityOptions() {
-        var courseType = courseTypeSelect.val();
-        var selectedCapacity = capacitySelect.val();
-        
-        // بازیابی گزینه‌های اصلی
-        capacitySelect.html(originalCapacityOptions);
-        
-        // اگر دوره حضوری است
-        if (courseType === inPersonValue) {
-            // حذف گزینه نامحدود
-            capacitySelect.find('option[value="' + unlimitedValue + '"]').remove();
-            
-            // اگر قبلاً نامحدود انتخاب شده بود
-            if (selectedCapacity === unlimitedValue) {
-                capacitySelect.val('');
-                // فعال کردن رویداد onchange برای پاکسازی موارد وابسته
-                triggerOnChange(capacitySelect);
-            }
-        }
-        
-        // بازسازی رویداد onchange اصلی
-        restoreOnChangeEvent();
-        
-        // بازسازی Select2 اگر وجود دارد
-        reinitializeSelect2();
-    }
-    
-    // فعال‌سازی رویداد onchange
-    function triggerOnChange(element) {
-        var onchangeCode = element.attr('onchange');
-        if (onchangeCode) {
-            // ایجاد یک تابع از کد onchange
-            try {
-                var changeFunc = new Function('return (function() {' + onchangeCode + '})')();
-                changeFunc.call(element[0]);
-            } catch (e) {
-                console.error('Error executing onchange:', e);
-            }
-        }
-    }
-    
-    // بازسازی رویداد onchange
-    function restoreOnChangeEvent() {
-        var onchangeCode = capacitySelect.attr('onchange');
-        capacitySelect.off('change.capacity').removeAttr('onchange');
-        
-        if (onchangeCode) {
-            capacitySelect.on('change.capacity', function() {
-                try {
-                    eval(onchangeCode);
-                } catch (e) {
-                    console.error('Error in onchange event:', e);
-                }
-            });
-        }
-    }
-    
-    // بازسازی Select2
-    function reinitializeSelect2() {
-        if ($.fn.select2 && capacitySelect.hasClass('js-example-basic-single')) {
-            capacitySelect.select2('destroy');
-            capacitySelect.select2({
-                placeholder: "انتخاب"
-            });
-        }
-    }
-    
-    // اجرای اولیه
-    updateCapacityOptions();
-    
-    // گوش دادن به تغییرات نوع دوره
-    courseTypeSelect.on('change', function() {
-        updateCapacityOptions();
-        
-        // اگر دوره حضوری است و قبلاً نامحدود انتخاب شده بود
-        if ($(this).val() === inPersonValue && capacitySelect.val() === unlimitedValue) {
-            capacitySelect.val('');
-            triggerOnChange(capacitySelect);
-        }
-    });
-    
-    // گوش دادن به تغییرات ظرفیت
-    $(document).on('change', '.capacity_type', function() {
-        var courseType = courseTypeSelect.val();
-        var capacityValue = $(this).val();
-        
-        // بررسی انتخاب نامحدود برای دوره حضوری
-        if (courseType === inPersonValue && capacityValue === unlimitedValue) {
-            alert("برای دوره حضوری نمی‌توان گزینه نامحدود را انتخاب کرد.");
-            $(this).val('');
-            triggerOnChange($(this));
-            return false;
-        }
-    });
-});
-
-JS;
-
-$this->registerJs($jss);
-
-// تغییر ۲ (رفع باگ، ۲۰۲۶-۰۸-۲۸): چون گزینه‌ی «نامحدود» دیگه توی این فرم
-// نیست، مرورگر همیشه اولین گزینه‌ی دراپ‌داونِ «نوع ظرفیت» یعنی «محدود» رو
-// به‌صورت پیش‌فرض انتخاب‌شده نشون می‌ده - اما فیلد «ظرفیت» فقط از طریق AJAX
-// داخل رویداد onchange همین دراپ‌داون پر/نمایش داده می‌شه، که روی لود اولیه‌ی
-// صفحه هیچ‌وقت اجرا نمی‌شد؛ در نتیجه با اینکه «محدود» انتخاب شده بود، فیلد
-// ظرفیت مخفی می‌موند. این اسکریپت دقیقاً همون منطقِ onchange (بدون تغییر در
-// اکشن کنترلر یا در نتیجه‌ی نهایی) رو یک‌بار هم روی لود اولیه‌ی صفحه اجرا
-// می‌کنه تا وضعیت اولیه با مقدار واقعاً انتخاب‌شده هماهنگ باشه.
-$capacityUrl = Url::toRoute('/packages/capacity');
-$capacityInitJs = '
-$(document).ready(function() {
-    var initialCapacityType = $("#courses-student_capacity-type").val();
-    if (initialCapacityType) {
-        $.get( "' . $capacityUrl . '", { id: initialCapacityType } )
-        .done(function( data ) {
-            $("#capacity1").html(data);
-            $(".js-example-basic-single").select2({
-                placeholder: "انتخاب"
-            });
-        });
-
-        if (initialCapacityType == "3") {
-            $("#contract_file_div").show();
-            $("#contract_file").prop("required", true);
-        } else {
-            $("#contract_file_div").hide();
-            $("#contract_file").prop("required", false);
-        }
-    }
-});
-';
-$this->registerJs($capacityInitJs);
-
-
-
-$digit = <<< JS
-
-(function() {
-    'use strict';
-
-    // تابع بررسی: آیا کاراکتر یک عدد انگلیسی است؟
-    function isEnglishDigit(char) {
-        return /^[0-9]$/.test(char);
-    }
-
-    // تابع بررسی: آیا رشته حاوی اعداد غیرانگلیسی است؟
-    function containsNonEnglishDigit(str) {
-        // اعداد فارسی (۰-۹) و عربی (٠-٩) را چک می‌کند
-        return /[۰-۹]|[٠-٩]/.test(str);
-    }
-
-    // تابع نمایش هشدار (می‌توانید متن دلخواه خود را جایگزین کنید)
-    function showAlert() {
-        toastr.error("لطفا اعداد را با کیبورد انگلیسی وارد کنید", {
-            positionClass: "toast-top-center",
-            containerId: "toast-top-center",
-            "closeButton": "true"
-        });
-    }
-
-    // تابع اصلی که روی هر فیلد اعمال می‌شود
-    function setupEnglishDigitsInput(input) {
-        // ذخیره آخرین مقدار مجاز
-        let lastValidValue = input.value;
-
-        // ۱. رویداد keydown: جلوگیری از تایپ کاراکترهای غیرمجاز
-        input.addEventListener('keydown', function(e) {
-            const key = e.key;
-
-            // اجازه کلیدهای کنترلی (Backspace, Tab, Enter, Escape, arrows, Home, End, و ...)
-            const controlKeys = [
-                'Backspace', 'Tab', 'Enter', 'Escape', 'Delete',
-                'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown',
-                'Home', 'End', 'PageUp', 'PageDown'
-            ];
-            if (controlKeys.includes(key)) {
-                return; // اجازه عبور
-            }
-
-            // اجازه کلیدهای ترکیبی با Ctrl/Cmd (مثل Ctrl+A, Ctrl+C, Ctrl+V)
-            if (e.ctrlKey || e.metaKey) {
-                return; // اجازه عبور (اما پیست بعداً کنترل می‌شود)
-            }
-
-            // اگر کلید یک عدد انگلیسی است، اجازه بده
-            if (isEnglishDigit(key)) {
-                return;
-            }
-
-            // اگر کلید عدد فارسی یا عربی است، بلاک کن و هشدار بده
-            if (/^[۰-۹]$/.test(key) || /^[٠-٩]$/.test(key)) {
-                e.preventDefault();
-                showAlert();
-                return;
-            }
-
-            // هر کلید دیگر (حروف، علائم و ...) بلاک شود
-            e.preventDefault();
-        });
-
-        // ۲. رویداد paste: بررسی متن چسبانده شده
-        input.addEventListener('paste', function(e) {
-            e.preventDefault(); // همیشه پیش‌فرض را لغو می‌کنیم تا خودمان مدیریت کنیم
-            const pastedText = (e.clipboardData || window.clipboardData).getData('text/plain');
-
-            // اگر متن چسبانده شده شامل اعداد غیرانگلیسی باشد، هشدار بده و هیچ کاری نکن
-            if (containsNonEnglishDigit(pastedText)) {
-                showAlert();
-                return;
-            }
-
-            // اگر فقط شامل اعداد انگلیسی و کاراکترهای مجاز دیگر باشد، آن را در جای درست وارد کن
-            // (اختیاری: می‌توانید فقط اعداد را نگه دارید، اما ما کل متن را با شرط بالا پذیرفته‌ایم)
-            const start = input.selectionStart;
-            const end = input.selectionEnd;
-            const currentValue = input.value;
-            const newValue = currentValue.substring(0, start) + pastedText + currentValue.substring(end);
-            input.value = newValue;
-            lastValidValue = newValue; // به‌روزرسانی مقدار مجاز
-            input.setSelectionRange(start + pastedText.length, start + pastedText.length);
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-        });
-
-        // ۳. رویداد input: برای مواردی مثل autofill یا drag-drop که از keydown رد نمی‌شوند
-        input.addEventListener('input', function(e) {
-            const currentValue = input.value;
-            // اگر مقدار جدید شامل اعداد غیرانگلیسی است
-            if (containsNonEnglishDigit(currentValue)) {
-                // بازگرداندن به آخرین مقدار مجاز
-                input.value = lastValidValue;
-                showAlert();
-                // اگر نیاز است validatorهای Yii را آگاه کنید
-                input.dispatchEvent(new Event('change', { bubbles: true }));
-            } else {
-                // در غیر این صورت مقدار جدید را به عنوان مجاز ذخیره کن
-                lastValidValue = currentValue;
-            }
-        });
-
-        // ۴. رویداد drop: جلوگیری از درگ کردن متن غیرمجاز
-        input.addEventListener('drop', function(e) {
-            e.preventDefault();
-            const text = e.dataTransfer.getData('text/plain');
-            if (containsNonEnglishDigit(text)) {
-                showAlert();
-                return;
-            }
-            // درج متن در موقعیت رها شده
-            const start = input.selectionStart;
-            const end = input.selectionEnd;
-            const currentValue = input.value;
-            const newValue = currentValue.substring(0, start) + text + currentValue.substring(end);
-            input.value = newValue;
-            lastValidValue = newValue;
-            input.setSelectionRange(start + text.length, start + text.length);
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-        });
-    }
-
-    // اعمال روی تمام فیلدهای موجود
-    document.querySelectorAll('.only-english-digits').forEach(setupEnglishDigitsInput);
-
-    // نظارت بر اضافه شدن فیلدهای جدید (مثلاً با Ajax)
-    const observer = new MutationObserver(function(mutations) {
-        mutations.forEach(function(mutation) {
-            mutation.addedNodes.forEach(function(node) {
-                if (node.nodeType === 1) { // المان
-                    if (node.matches && node.matches('.only-english-digits')) {
-                        setupEnglishDigitsInput(node);
-                    }
-                    if (node.querySelectorAll) {
-                        node.querySelectorAll('.only-english-digits').forEach(setupEnglishDigitsInput);
-                    }
-                }
-            });
-        });
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
+    total();
 })();
-
-JS;
-
-$this->registerJs($digit);
-
-$ins_date = <<< JS
-
-JS;
-
-$this->registerJs($ins_date);
+JS
+, \yii\web\View::POS_END);
 ?>
-
-<style>
-    .drop-file {
-        position: absolute;
-        background: red;
-        top: 0;
-        right: 0;
-        width: 100%;
-        height: 100%;
-        opacity: 0;
-    }
-
-    div[data-key] {
-        display: none;
-    }
-
-    .summary {
-        display: none;
-    }
-    .cke_textarea_inline
-    {
-        padding: 10px;
-        height: 200px;
-        overflow: auto;
-        font-family:IRANYekanWeb;
-        border: 1px solid gray;
-        -webkit-appearance: textfield;
-    }
-</style>
 <div class="container-xxl flex-grow-1 container-p-y">
-    <div class="modal fade" id="cropper-modal" tabindex="-1" style="display: none;" aria-hidden="true">
-        <div class="modal-dialog modal-dialog-centered" role="document">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title secondary-font title" id="modalCenterTitle">ویرایش تصویر</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                </div>
-                <div class="modal-body" id="body">
-                    <div class="" style="width: 500px; height: 500px;">
-                        <img src="" class="cropper-image" alt="img-cropper" style="width: 500px; height: 500px;">
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">
-                        بستن
-                    </button>
-                    <button class="btn btn-label-primary submit-crop">تایید</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <nav aria-label="breadcrumb">
-        <ol class="lh-1-85 breadcrumb breadcrumb-style1">
-            <li class="breadcrumb-item">
-                <a href="javascript:void(0);">مدیریت دوره</a>
-            </li>
-            <li class="breadcrumb-item">
-                <a href="javascript:void(0);">دوره های جامع و یکساله</a>
-            </li>
-            <li class="breadcrumb-item active">ثبت دوره جدید</li>
+    <nav aria-label="breadcrumb" class="d-flex justify-content-between align-items-center mb-3">
+        <ol class="breadcrumb breadcrumb-style1 mb-0">
+            <li class="breadcrumb-item"><a href="<?= Url::to(['index']) ?>">دوره‌های میان‌مدت</a></li>
+            <li class="breadcrumb-item active">ثبت دوره‌ی جدید</li>
         </ol>
+        <a href="<?= Url::to(['index']) ?>" class="btn btn-sm btn-label-secondary">بازگشت</a>
     </nav>
-    <div class="card">
-        <div class="card-header d-flex justify-content-between align-items-center">
-            <h5 class="card-title mb-0">فرم ثبت دوره جدید</h5>
-        </div>
+
+    <?= Html::beginForm(['new'], 'post', ['enctype' => 'multipart/form-data', 'id' => 'package-form']) ?>
+    <div class="card mb-4">
+        <h5 class="card-header">مشخصات دوره</h5>
         <div class="card-body">
-            <div class="modal-body">
-                <?php $form = ActiveForm::begin(
-                    [
-                        'action' => ['new'],
-                        "method" => "post",
-                        'options' => [
-                            'id' => 'create-package-form',
-                            'class' => '',
-                            'enctype' => 'multipart/form-data'
-                        ],
-                        'fieldConfig' => [
-                            'options' => [
-                                'tag' => false,
-                            ],
-                            // خطاهای سمت سرور (مثلاً وقتی ذخیره‌سازی fail می‌شه و
-                            // همین صفحه با پیغام خطا دوباره رندر می‌شه) هم به رنگ
-                            // قرمز نشون داده بشن - هماهنگ با اسکریپت $inlineErrors
-                            // پایین‌تر که پیغام‌های سمت مرورگر رو قرمز می‌کنه.
-                            'errorOptions' => ['class' => 'help-block', 'style' => 'color:#dc3545'],
-                        ],
-                    ]
-                ); ?>
-                <div class="row">
-                    <div class="col-3 col-md-3 col-sm-12 dol-lg-3 col-xl-3 mb-3">
-                        <label for="nameWithTitle" class="form-label">عنوان اصلی فارسی *</label>
-                        <?= $form->field($model, 'title[main_fa]')->textInput(
-                            [
-                                'class' => 'form-control text-start',
-                                'required' => true,
-                                'oninvalid' => 'this.setCustomValidity(\'لطفا عنوان اصلی فارسی را وارد کنید\')',
-                                'oninput' => 'setCustomValidity(\'\')',
-                            ]
-                        )->label(false); ?>
-                    </div>
-                    <div class="col-3 col-md-3 col-sm-12 dol-lg-3 col-xl-3 mb-3">
-                        <label for="nameWithTitle" class="form-label">عنوان اصلی انگلیسی </label>
-                        <?= $form->field($model, 'title[main_en]')->textInput(
-                            [
-                                'class' => 'form-control text-start',
-//                                'required' => true,
-//                                'readonly' => true,
-//                                'disabled' => true,
-                                'oninvalid' => 'this.setCustomValidity(\'لطفا عنوان اصلی انگلیسی را وارد کنید\')',
-                                'oninput' => 'setCustomValidity(\'\')',
-                            ]
-                        )->label(false); ?>
-                    </div>
-                    <div class="col-3 col-md-3 col-sm-12 dol-lg-3 col-xl-3 mb-3">
-                        <label for="nameWithTitle" class="form-label">عنوان فارسی (داخل مدرک) *</label>
-                        <?= $form->field($model, 'title[degree_fa]')->textInput(
-                            [
-                                'class' => 'form-control text-start',
-                                'required' => true,
-                                'oninvalid' => 'this.setCustomValidity(\'لطفا عنوان فارسی را وارد کنید\')',
-                                'oninput' => 'setCustomValidity(\'\')',
-                            ]
-                        )->label(false); ?>
-                    </div>
-                    <div class="col-3 col-md-3 col-sm-12 dol-lg-3 col-xl-3 mb-3">
-                        <label for="nameWithTitle" class="form-label">عنوان انگلیسی (داخل مدرک) </label>
-                        <?= $form->field($model, 'title[degree_en]')->textInput(
-                            [
-                                'class' => 'form-control text-start',
-//                                'required' => true,
-//                                'readonly' => true,
-//                                'disabled' => true,
-                                'oninvalid' => 'this.setCustomValidity(\'لطفا عنوان انگلیسی را وارد کنید\')',
-                                'oninput' => 'setCustomValidity(\'\')',
-                            ]
-                        )->label(false); ?>
-                    </div>
-                    <div class="col-3 col-md-3 col-sm-12 dol-lg-3 col-xl-3 mb-3">
-                        <label for="nameWithTitle" class="form-label">قیمت اصلی (تومان) *</label>
-                        <?= $form->field($model, 'price')->textInput(
-                            [
-                                'class' => 'form-control text-start only-english-digits',
-                                'required' => true,
-                                'oninvalid' => 'this.setCustomValidity(\'لطفا قیمت اصلی دوره را وارد کنید\')',
-                                'oninput' => 'setCustomValidity(\'\')',
-//                                'onkeypress' => "return (event.charCode >= 48 && event.charCode <= 57)"
-                            ]
-                        )->label(false); ?>
-                    </div>
-                    <div class="col-3 col-md-3 col-sm-12 dol-lg-3 col-xl-3 mb-3">
-                        <label for="nameWithTitle" class="form-label">قیمت با تخفیف (تومان) </label>
-                        <?= $form->field($model, 'discount_price')->textInput(
-                            [
-                                'class' => 'form-control text-start only-english-digits',
-//                                'onkeypress' => "return (event.charCode >= 48 && event.charCode <= 57)"
-                            ]
-                        )->label(false); ?>
-                    </div>
-                    <div class="col-3 col-md-3 col-sm-12 dol-lg-3 col-xl-3 mb-3">
-                        <label for="nameWithTitle" class="form-label">زمان برگزاری * </label>
-                        <?= $form->field($model, 'time')->textInput(
-                            [
-                                'class' => 'form-control text-start',
-                                'required' => true,
-                                'oninvalid' => 'this.setCustomValidity(\'لطفا زمان برگزاری دوره را وارد کنید\')',
-                                'oninput' => 'setCustomValidity(\'\')',
-                            ]
-                        )->label(false); ?>
-                    </div>
-                    <div class="col-3 col-md-3 col-sm-12 dol-lg-3 col-xl-3 mb-3">
-                        <label for="nameWithTitle" class="form-label">محل برگزاری * </label>
-                        <?= $form->field($model, 'place')->textInput(
-                            [
-                                'class' => 'form-control text-start',
-                                'required' => true,
-                                'oninvalid' => 'this.setCustomValidity(\'لطفا محل برگزاری دوره را وارد کنید\')',
-                                'oninput' => 'setCustomValidity(\'\')',
-                            ]
-                        )->label(false); ?>
-                    </div>
-                    <div class="col-3 col-md-3 col-sm-12 dol-lg-3 col-xl-3 mb-3">
-                        <label for="nameWithTitle" class="form-label">نوع دوره *</label>
-                        <?= $form->field($model, 'content_type')->dropDownList(
-                            $courseType,
-                            [
-                                'class' => 'form-select',
-                                'id' => 'course-type',
-                                'required' => true,
-                                'oninvalid' => 'this.setCustomValidity(\'لطفا نوع دوره را مشخص کنید\')',
-                                'oninput' => 'setCustomValidity(\'\')',
-                            ]
-                        )->label(false); ?>
-                    </div>
-                    <div class="col-2 col-md-2 col-sm-12 dol-lg-2 col-xl-2 mb-3">
-                        <label for="nameWithTitle" class="form-label">نوع ظرفیت *</label>
-                        <?= $form->field($model, 'student_capacity[type]')->dropDownList(
-                            $capacityType,
-                            [
-                                'class' => 'form-select capacity_type',
-                                'required' => true,
-                                'oninvalid' => 'this.setCustomValidity(\'لطفا نوع ظرفیت دوره را مشخص کنید\')',
-                                'oninput' => 'setCustomValidity(\'\')',
-                                'onchange' => '
-            $.get( "' . Url::toRoute('/packages/capacity') . '", { id: $(this).val() } )
-            .done(function( data ) {
-                $("#capacity1").html(data);
-                $(".js-example-basic-single").select2({
-                    placeholder: "انتخاب"
-                });
-            });
-
-            if (this.value == "3") {
-                $("#contract_file_div").show();
-                $("#contract_file").prop("required", true);
-            } else {
-                $("#contract_file_div").hide();
-                $("#contract_file").prop("required", false);
-                $("#fileInput").val("");
-            }
-        '
-                            ]
-                        )->label(false); ?>
-                    </div>
-                    <div class="col-1 col-md-1 col-sm-12 dol-lg-1 col-xl-1 mb-3" id="capacity1">
-
-                    </div>
-                    <div class="col-3 col-md-3 col-sm-12 dol-lg-3 col-xl-3 mb-3" id="contract_file_div" style="display:none;">
-                        <label for="nameWithTitle" class="form-label">فایل قرارداد *</label>
-                        <?= $form->field($model, 'contract_file')->fileInput(
-                            [
-                                'class' => 'form-control text-start',
-                                'id' => 'contract_file',
-                                'oninvalid' => 'this.setCustomValidity(\'لطفا فایل قرارداد را وارد کنید\')',
-                                'oninput' => 'setCustomValidity(\'\')',
-                            ]
-                        )->label(false); ?>
-                    </div>
-<!--                    <div class="col-3 col-md-3 col-sm-12 dol-lg-3 col-xl-3 mb-3">-->
-<!--                        <label for="nameWithTitle" class="form-label">دسته بندی دوره *</label>-->
-<!--                        --><?php //= $form->field($model, 'type')->dropDownList(
-//                            $type,
-//                            [
-//                                'prompt' => 'لطفا انتخاب کنید',
-//                                'class' => 'form-select',
-//                                'required' => true,
-//                                'id' => 'course_type',
-//                                'oninvalid' => 'this.setCustomValidity(\'لطفا دسته بندی دوره را مشخص کنید\')',
-//                                'oninput' => 'setCustomValidity(\'\')',
-//                            ]
-//                        )->label(false); ?>
-<!--                    </div>-->
-                    <div class="col-3 col-md-3 col-sm-12 dol-lg-3 col-xl-3 mb-3">
-                        <label for="nameWithTitle" class="form-label">مدت زمان دوره *</label>
-                        <?= $form->field($model, 'duration')->textInput(
-                            [
-                                'class' => 'form-control text-start',
-                                'required' => true,
-                                'id' => 'duration',
-                                'oninvalid' => 'this.setCustomValidity(\'لطفا مدت زمان دوره را به درستی وارد کنید\')',
-                                'oninput' => 'setCustomValidity(\'\')',
-                                'type' => 'number',
-                                'onkeypress' => "return (event.charCode >= 48 && event.charCode <= 57)"
-                            ]
-                        )->label(false); ?>
-                    </div>
-                    <div class="col-3 col-md-3 col-sm-12 dol-lg-3 col-xl-3 mb-3" id="from1">
-                        <label for="nameWithTitle" class="form-label">تاریخ شروع دوره *</label>
-                        <?= $form->field($model, 'date[from]')->textInput(
-                            [
-                                'class' => 'form-control dob-picker text-start',
-                                'required' => true,
-                                'id' => 'start-date',
-                                'oninvalid' => 'this.setCustomValidity(\'لطفا تاریخ شروع دوره را وارد کنید\')',
-                                'oninput' => 'setCustomValidity(\'\')',
-                            ]
-                        )->label(false); ?>
-                    </div>
-                    <div class="col-3 col-md-3 col-sm-12 dol-lg-3 col-xl-3 mb-3" id="to1">
-                        <label for="nameWithTitle" class="form-label">تاریخ اتمام دوره *</label>
-                        <?= $form->field($model, 'date[to]')->textInput(
-                            [
-                                'class' => 'form-control dob-picker text-start',
-                                'required' => true,
-                                'id' => 'end-date',
-                                'oninvalid' => 'this.setCustomValidity(\'لطفا تاریخ اتمام دوره را وارد کنید\')',
-                                'oninput' => 'setCustomValidity(\'\')',
-                            ]
-                        )->label(false); ?>
-                    </div>
-                    <div class="col-3 col-md-3 col-sm-12 dol-lg-3 col-xl-3 mb-3">
-                        <label for="nameWithTitle" class="form-label">آخرین مهلت ثبت عضو  </label>
-                        <?= $form->field($model, 'deadline_date')->textInput(
-                            [
-                                'class' => 'form-control text-start',
-                                'readonly' => true,
-                                'id' => 'deadline-date',
-                                'oninvalid' => 'this.setCustomValidity(\'لطفا آخرین مهلت ثبت عضو را وارد کنید\')',
-                                'oninput' => 'setCustomValidity(\'\')',
-                            ]
-                        )->label(false); ?>
-                    </div>
-                    <div class="col-12 col-md-12 col-sm-12 dol-lg-12 col-xl-12 mb-3">
-                        <label for="nameWithTitle" class="form-label">توضیحات دوره</label>
-                        <?php
-                        echo $form->field($model, 'description')->widget(CKEditor::className(),[
-                            'editorOptions' => [
-                                'preset' => 'full',
-                                'inline' => false,
-                            ],
-                        ])->label(false); ?>
-                    </div>
-                    <div class="card mb-4 relative">
-                        <div class="card-body">
-                            <div class="dropzone needsclick dz-clickable drop-zone" id="dropzone-test" cropper="cropper-modal">
-                                <div class="dz-message needsclick">
-                                    <?= $form->field($model, 'preview_image')->fileInput(
-                                        [
-                                            'class' => 'form-control text-start drop-file',
-                                            'required' => true
-                                        ]
-                                    )->label(false); ?>
-                                    <input type="hidden" name="image" class="base64_img" />
-                                    <span class="drop-title"></span>
-                                    <span class="note needsclick">تصویر پیش نمایش دوره</span>
-                                    <div class="alert alert-danger" role="alert">* نکته مهم: تصویر انتخاب شده نباید بیشتر از <?= Yii::getAlias('@uploadSize') / 1000 ?> کیلوبایت باشد</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="divider">
-                        <div class="divider-text">شرایط اقساطی</div>
-                    </div>
-                    <div class="form-repeater">
-                        <div data-repeater-list="installments">
-                            <div class="form-send-message d-flex justify-content-between align-items-center">
-                                <?= $form->field($model, 'prepayment_installments')->textInput(
-                                    [
-                                        'class' => 'form-control message-input me-3 only-english-digits',
-                                        'type' => 'number',
-                                        'placeholder' => 'مبلغ پیش پرداخت'
-                                    ]
-                                )->label(false); ?>
-                                <div class="message-actions d-flex align-items-center">
-                                    <button class="btn btn-primary" data-repeater-create="" type="button" style="width: 150px;">
-                                        <i class="bx bx-plus me-1"></i>
-                                        <span class="align-middle grow">افزودن قسط</span>
-                                    </button>
-                                </div>
-                            </div>
-                            <div data-repeater-item="">
-                                <div class="row">
-                                    <div class="mb-3 col-lg-6 col-xl-3 col-12 mb-0">
-                                        <label class="form-label" for="form-repeater-1-1">تاریخ پرداخت *</label>
-                                        <input type="text" required name="deadline" class="form-control text-start add-dob" dir="ltr">
-                                    </div>
-                                    <div class="mb-3 col-lg-6 col-xl-3 col-12 mb-0">
-                                        <label class="form-label" for="form-repeater-1-2">مبلغ (تومان) *</label>
-                                        <input type="number" required name="amount" id="form-repeater-1-2" class="form-control text-start only-english-digits" dir="ltr">
-                                    </div>
-                                    <div class="mb-3 col-lg-12 col-xl-2 col-12 d-flex align-items-center mb-0">
-                                        <button class="btn btn-label-danger mt-4" data-repeater-delete="">
-                                            <i class="bx bx-x me-1"></i>
-                                            <span class="align-middle">حذف</span>
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="mb-0 add-item">
-
-                        </div>
-                    </div>
-                    <hr class="mt-2">
-                    <div class="col-4 col-md-4 col-sm-12 dol-lg-4 col-xl-4 mb-3">
-                        <label for="select2Basic" class="form-label">دانشکده *</label>
-                        <?php
-                        if (Yii::$app->user->identity->role == 'user') {
-                            echo $form->field($model, 'college')->dropDownList(
-                                $colleges,
-                                [
-                                    'prompt' => 'لطفا دانشکده را مشخص کنید',
-                                    'class' => 'select2 form-select form-select-lg',
-                                    'required' => true,
-                                    // اصلاح ۲۰۲۶-۰۸-۲۸: بدون oninvalid/oninput، مرورگر برای این
-                                    // فیلد پیغام پیش‌فرض انگلیسی نشون می‌داد - همون الگوی موجود
-                                    // پروژه (مثل فیلد ظرفیت در PackagesController::actionCapacity)
-                                    // روی این فیلد هم اعمال شد.
-                                    'oninvalid' => 'this.setCustomValidity(\'لطفا دانشکده را مشخص کنید\')',
-                                    'oninput' => 'setCustomValidity(\'\')',
-                                    'id' => '',
-                                    'data-allow-clear' => true,
-                                    'onchange' => '
-                                    let capacity_type = $("#courses-student_capacity-type").val()
-                                    $.get( "' . Url::toRoute('/packages/brokers1') . '", { id: $(this).val(), capacity_type: capacity_type } )
-                                    .done(function( data ) {
-                                    var main_data=JSON.parse(data);
-                                        $(\'#broker1\').html(main_data.brokers);
-                                        $(\'#teachers1\').html(main_data.teachers);
-                                        $(\'#lessons1\').html(main_data.lessons);
-                                        $(".select2").each(function () {
-                                        var targetInput = $(this);
-                                        var select2Input = targetInput.select2({
-                                            placeholder: "لطفا انتخاب کنید",
-                                            dropdownParent: targetInput.hasClass("none-parent") ? null : targetInput.parent(),
-                                            value: "borna",
-                                        });
-                                    });
-                                    }
-                                );'
-                                ]
-                            )->label(false);
-                        } else {
-                            echo $form->field($model, 'college')->dropDownList(
-                                $colleges,
-                                [
-                                    'class' => 'select2 form-select form-select-lg',
-                                    'required' => true,
-                                    'oninvalid' => 'this.setCustomValidity(\'لطفا دانشکده را مشخص کنید\')',
-                                    'oninput' => 'setCustomValidity(\'\')',
-                                    'id' => '',
-                                    'data-allow-clear' => true,
-                                    'onchange' => '
-                                    let capacity_type = $("#courses-student_capacity-type").val()
-                                    $.get( "' . Url::toRoute('/packages/brokers1') . '", { id: $(this).val(), capacity_type: capacity_type } )
-                                    .done(function( data ) {
-                                    var main_data=JSON.parse(data);
-                                        $(\'#broker1\').html(main_data.brokers);
-                                        $(\'#teachers1\').html(main_data.teachers);
-                                        $(\'#lessons1\').html(main_data.lessons);
-                                        $(".select2").each(function () {
-                                        var targetInput = $(this);
-                                        var select2Input = targetInput.select2({
-                                            placeholder: "لطفا انتخاب کنید",
-                                            dropdownParent: targetInput.hasClass("none-parent") ? null : targetInput.parent(),
-                                            value: "borna",
-                                        });
-                                    });
-                                    }
-                                );'
-                                ]
-                            )->label(false);
-                        }
-                        ?>
-                    </div>
-                    <div class="col-4 col-md-4 col-sm-12 dol-lg-4 col-xl-4 mb-3">
-                        <label for="nameWithTitle" class="form-label">کارگزار</label>
-                        <div id="broker1">
-                            <span class="badge bg-label-warning">در انتظار انتخاب دانشکده</span>
-                        </div>
-                    </div>
-                    <div class="col-4 col-md-4 col-sm-12 dol-lg-4 col-xl-4 mb-3">
-                        <label for="nameWithTitle" class="form-label">نوع قرارداد کارگزار</label>
-                        <div id="broker_contracts1">
-                            <span class="badge bg-label-warning">در انتظار انتخاب کارگزار</span>
-                        </div>
-                    </div>
-                    <hr class="mb-2">
-                    <div class="col-6 col-md-6 col-sm-12 dol-lg-6 col-xl-6 mb-3">
-                        <label for="nameWithTitle" class="form-label">انتخاب دروس دوره *</label>
-                        <div id="lessons1">
-                            <span class="badge bg-label-warning">در انتظار انتخاب دانشکده</span>
-                        </div>
-                    </div>
-                    <div class="col-12 col-md-12 col-sm-12 dol-lg-12 col-xl-12 mb-3">
-                        <div class="row" id="show_courses">
-
-                        </div>
-                    </div>
-
-
+            <div class="row g-3 mb-4">
+                <div class="col-md-6"><label class="form-label" for="pkg-title-fa">عنوان اصلی فارسی *</label><input type="text" id="pkg-title-fa" name="Courses[title][main_fa]" class="form-control" required maxlength="250"></div>
+                <div class="col-md-6"><label class="form-label" for="pkg-title-en">عنوان اصلی انگلیسی</label><input type="text" id="pkg-title-en" name="Courses[title][main_en]" class="form-control" maxlength="250" dir="ltr" data-input="en"></div>
+                <div class="col-md-6"><label class="form-label" for="pkg-degree-fa">عنوان فارسی (داخل گواهی) *</label><input type="text" id="pkg-degree-fa" name="Courses[title][degree_fa]" class="form-control" required maxlength="250"></div>
+                <div class="col-md-6"><label class="form-label" for="pkg-degree-en">عنوان انگلیسی (داخل گواهی)</label><input type="text" id="pkg-degree-en" name="Courses[title][degree_en]" class="form-control" maxlength="250" dir="ltr" data-input="en"></div>
+            </div>
+            <div class="row g-3 mb-4">
+                <div class="col-md-3"><label class="form-label" for="pkg-price">قیمت اصلی (تومان) *</label><input type="text" id="pkg-price" name="Courses[price]" class="form-control" required inputmode="numeric" maxlength="12" data-input="digits" dir="ltr"></div>
+                <?php if (CourseAccess::canSetDiscount()): ?>
+                    <div class="col-md-3"><label class="form-label" for="pkg-discount">قیمت با تخفیف (تومان)</label><input type="text" id="pkg-discount" name="Courses[discount_price]" class="form-control" inputmode="numeric" maxlength="12" data-input="digits" dir="ltr"><small class="text-muted">خالی = بدون تخفیف</small></div>
+                <?php else: ?>
+                    <input type="hidden" id="pkg-discount" value="">
+                <?php endif; ?>
+                <div class="col-md-3">
+                    <label class="form-label" for="pkg-duration">مدت زمان دوره (ساعت) *</label>
+                    <input type="text" id="pkg-duration" name="Courses[duration]" class="form-control" required inputmode="numeric" maxlength="4" data-input="digits" dir="ltr">
+                    <small class="text-muted" id="pkg-duration-help">حداقل <?= PackageForm::MIN_HOURS ?> ساعت</small>
+                </div>
+                <div class="col-md-3"><label class="form-label" for="pkg-time">زمان برگزاری *</label><input type="text" id="pkg-time" name="Courses[time]" class="form-control" required maxlength="100" placeholder="مثلاً پنجشنبه‌ها ۹ تا ۱۳"></div>
+                <div class="col-md-3"><label class="form-label" for="pkg-place">محل برگزاری *</label><input type="text" id="pkg-place" name="Courses[place]" class="form-control" required maxlength="200"></div>
+                <div class="col-md-3">
+                    <label class="form-label" for="pkg-content-type">نوع دوره *</label>
+                    <?= Html::dropDownList('Courses[content_type]', null, ShortCourseForm::CONTENT_TYPES, ['id' => 'pkg-content-type', 'class' => 'form-select', 'prompt' => 'انتخاب', 'required' => true]) ?>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="pkg-capacity">نوع ظرفیت *</label>
+                    <?= Html::dropDownList('Courses[student_capacity][type]', null, $capacityTypes, ['id' => 'pkg-capacity', 'class' => 'form-select', 'prompt' => 'انتخاب', 'required' => true]) ?>
+                </div>
+                <div class="col-md-3" id="pkg-capacity-number-wrap" style="display:none">
+                    <label class="form-label" for="pkg-capacity-number">ظرفیت (نفر) *</label>
+                    <input type="text" id="pkg-capacity-number" name="Courses[student_capacity][number]" class="form-control" inputmode="numeric" maxlength="5" data-input="digits" dir="ltr">
+                </div>
+                <div class="col-md-6" id="pkg-contract-file-wrap" style="display:none">
+                    <label class="form-label" for="pkg-contract-file">فایل قرارداد *</label>
+                    <input type="file" id="pkg-contract-file" name="Courses[contract_file]" class="form-control" accept=".pdf,.jpg,.jpeg,.png,.webp">
+                    <small class="text-muted">PDF یا تصویر، حداکثر ۱۰ مگابایت</small>
                 </div>
             </div>
-            <div class="modal-footer demo-inline-spacing">
-                <?php
-                if (Yii::$app->user->identity->role == 'user') {
-                    echo '<button type="submit" name="send_to_admin" class="btn btn-primary submit-course-btn" disabled>ثبت دوره </button>';
-                } else {
-                ?>
-                    <button type="submit" name="send_to_admin" class="btn btn-primary submit-course-btn" disabled>ثبت دوره و ارسال برای تائید</button>
-                    <button type="submit" name="draft" class="btn btn-warning submit-course-btn" disabled>ثبت دوره به عنوان پیش نویس</button>
-                <?php
-                }
-                ?>
-                <?php ActiveForm::end(); ?>
+            <div class="row g-3 mb-4">
+                <div class="col-md-3"><label class="form-label" for="pkg-start">تاریخ شروع دوره *</label><input type="text" id="pkg-start" name="Courses[date][from]" class="form-control" required autocomplete="off"></div>
+                <div class="col-md-3"><label class="form-label" for="pkg-end">تاریخ اتمام دوره *</label><input type="text" id="pkg-end" name="Courses[date][to]" class="form-control" required autocomplete="off"><small class="text-muted">حداقل یک روز بعد از شروع</small></div>
+                <div class="col-md-3"><label class="form-label" for="pkg-deadline">آخرین مهلت ثبت عضو</label><input type="text" id="pkg-deadline" class="form-control" disabled placeholder="خودکار"><small class="text-muted">یک‌چهارم ابتدای دوره</small></div>
+                <div class="col-md-3"><label class="form-label" for="pkg-image">تصویر دوره</label><input type="file" id="pkg-image" name="Courses[preview_image]" class="form-control" accept=".jpg,.jpeg,.png,.webp"><small class="text-muted">حداکثر ۲ مگابایت</small></div>
+            </div>
+            <label class="form-label">توضیحات دوره</label>
+            <?= CKEditor::widget(['name' => 'Courses[description]', 'editorOptions' => ['preset' => 'standard', 'inline' => false]]) ?>
+        </div>
+    </div>
+
+    <div class="card mb-4">
+        <h5 class="card-header">واحد، کارگزار و کلاس آنلاین</h5>
+        <div class="card-body">
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <label class="form-label" for="pkg-unit">واحد *</label>
+                    <?php if ($fixedUnit !== null): ?>
+                        <input type="text" class="form-control" value="<?= Html::encode($fixedUnit[1]) ?>" disabled>
+                        <input type="hidden" id="pkg-unit" name="Courses[college]" value="<?= Html::encode($fixedUnit[0]) ?>">
+                    <?php elseif (empty($units)): ?>
+                        <input type="text" class="form-control is-invalid" value="واحدی برای حساب شما تعریف نشده است" disabled>
+                    <?php else: ?>
+                        <?= Html::dropDownList('Courses[college]', null, $units, ['id' => 'pkg-unit', 'class' => 'form-select', 'prompt' => 'انتخاب واحد', 'required' => true]) ?>
+                    <?php endif; ?>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="pkg-broker">کارگزار</label>
+                    <select id="pkg-broker" name="Courses[broker][_id]" class="form-select" data-placeholder="بدون کارگزار" disabled <?= $isBroker ? 'data-force="1"' : '' ?>><option value="">ابتدا واحد را انتخاب کنید</option></select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="pkg-contract">نوع قرارداد کارگزار</label>
+                    <select id="pkg-contract" name="Courses[broker][contract]" class="form-select" data-placeholder="انتخاب قرارداد" disabled><option value="">ابتدا کارگزار را انتخاب کنید</option></select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label" for="pkg-server">کلاس روی کدام سرور برگزار شود؟ *</label>
+                    <?= Html::dropDownList('Courses[classroom_server]', null, $serverOptions, ['id' => 'pkg-server', 'class' => 'form-select', 'prompt' => 'انتخاب سرور', 'required' => true]) ?>
+                </div>
             </div>
         </div>
     </div>
+
+    <div class="card mb-4">
+        <h5 class="card-header">دروس دوره</h5>
+        <div class="card-body">
+            <label class="form-label" for="pkg-lessons">دروس *</label>
+            <select id="pkg-lessons" class="form-select" multiple data-placeholder="جست‌وجو و انتخاب دروس" disabled></select>
+            <small class="text-muted d-block mb-3">برای هر درس مدرس، تاریخ‌ها (داخل بازه‌ی دوره)، ساعت و مدت را وارد کنید.</small>
+            <div class="text-muted" id="pkg-lessons-empty">هنوز درسی انتخاب نشده است.</div>
+            <div class="row g-3" id="pkg-lesson-cards"></div>
+        </div>
+    </div>
+
+    <div class="card mb-4">
+        <h5 class="card-header">شرایط اقساطی <small class="text-muted">(اختیاری)</small></h5>
+        <div class="card-body">
+            <p class="text-muted small">اگر دوره فقط نقدی است این بخش را خالی بگذارید. مجموع پیش‌پرداخت و اقساط باید دقیقاً برابر شهریه‌ی قابل پرداخت باشد و سررسید اقساط بین تاریخ شروع و اتمام دوره (به ترتیب) باشد.</p>
+            <div class="row g-3 align-items-end mb-3">
+                <div class="col-md-4"><label class="form-label" for="pkg-prepayment">مبلغ پیش‌پرداخت (تومان)</label><input type="text" id="pkg-prepayment" name="Courses[prepayment_installments]" class="form-control" inputmode="numeric" maxlength="12" data-input="digits" dir="ltr"></div>
+                <div class="col-md-4"><button type="button" class="btn btn-label-primary js-add-installment"><i class="bx bx-plus me-1"></i>افزودن قسط</button></div>
+            </div>
+            <div id="pkg-installments"></div>
+            <div class="alert mt-3" id="pkg-installments-total" style="display:none">
+                <div class="d-flex flex-wrap justify-content-between gap-2">
+                    <span>مجموع پیش‌پرداخت و اقساط: <b class="js-sum"></b> تومان</span>
+                    <span>شهریه: <b class="js-payable"></b> تومان — <b class="js-diff"></b></span>
+                </div>
+            </div>
+            <template id="pkg-installment-template">
+                <div class="row g-2 align-items-end mb-2 js-installment">
+                    <div class="col-auto"><span class="badge bg-label-primary">قسط <span class="js-number"></span></span></div>
+                    <div class="col-md-4"><label class="form-label small">تاریخ سررسید *</label><input type="text" class="form-control js-deadline" data-f="deadline" required autocomplete="off"></div>
+                    <div class="col-md-4"><label class="form-label small">مبلغ (تومان) *</label><input type="text" class="form-control js-amount" required inputmode="numeric" data-input="digits" dir="ltr" maxlength="12"></div>
+                    <div class="col-auto"><button type="button" class="btn btn-icon btn-label-danger js-remove-installment" title="حذف قسط"><i class="bx bx-trash"></i></button></div>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <div class="d-flex flex-wrap gap-2 justify-content-end mb-5">
+        <a href="<?= Url::to(['index']) ?>" class="btn btn-label-secondary">انصراف</a>
+        <?php if (!$isAdmin): ?>
+            <button type="submit" name="draft" value="1" class="btn btn-label-primary" formnovalidate>ذخیره‌ی پیش‌نویس</button>
+        <?php endif; ?>
+        <button type="submit" class="btn btn-primary" <?= empty($units) ? 'disabled' : '' ?>><?= $isAdmin ? 'ثبت و فعال‌سازی دوره' : 'ثبت و ارسال برای بررسی' ?></button>
+    </div>
+    <?= Html::endForm() ?>
 </div>

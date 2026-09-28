@@ -414,6 +414,11 @@ $tab = <<< JS
     });
 JS;
 $this->registerJs($tab);
+// تاریخ اتمام حداقل یک روز بعد از شروع؛ همه‌ی فیلدهای انتخابی با جست‌وجو
+\frontend\assets\DateRangeAsset::register($this);
+\frontend\assets\SelectSearchAsset::register($this);
+$this->registerJs("EecDateRange.bind(document.getElementById('start-date'), document.getElementById('end-date'));", \yii\web\View::POS_END);
+$this->registerJs("$(window).on('load', function () { EecSelect.init(document.querySelector('.container-xxl')); });", \yii\web\View::POS_END);
 
 $url = Yii::$app->urlManager->createAbsoluteUrl('packages/show_user_detail', 'https');
 $_csrf = Yii::$app->request->getCsrfToken();
@@ -1345,7 +1350,8 @@ $this->registerJs($digit);
                             <div class="col-3 col-md-3 col-sm-12 dol-lg-3 col-xl-3 mb-3">
                                 <label for="nameWithTitle" class="form-label">قیمت با تخفیف (تومان) *</label>
                                 <?php
-                                if($allowEdit)
+                                // بند ۵.۲ صورتجلسه: تخفیف شهریه فقط توسط مدیر سیستم
+                                if($allowEdit && \app\components\CourseAccess::canSetDiscount())
                                     echo $form->field($model, 'discount_price')->textInput(
                                         [
                                             'class' => 'form-control text-start only-english-digits',
@@ -1554,7 +1560,8 @@ $this->registerJs($digit);
                             <div class="col-3 col-md-3 col-sm-12 dol-lg-3 col-xl-3 mb-3" id="from1">
                                 <label for="nameWithTitle" class="form-label">تاریخ شروع دوره *</label>
                                 <?php
-                                if(Yii::$app->user->identity->role == 'user' || Yii::$app->user->identity->role == 'cnt' || $model->status != '1')
+                                // پس از ثبت، تاریخ‌ها را فقط مدیر سیستم تغییر می‌دهد (سمت سرور هم اعمال می‌شود)
+                                if($allowEdit && \app\components\CourseAccess::isAdmin())
                                     echo $form->field($model, 'date[from]')->textInput(
                                         [
                                             'class' => 'form-control dob-picker text-start',
@@ -1565,13 +1572,13 @@ $this->registerJs($digit);
                                         ]
                                     )->label(false);
                                 else
-                                    echo '<input type="text" disabled readonly class="form-control text-start" value="'.$model->date['from'].'">';
+                                    echo '<input type="text" disabled readonly class="form-control text-start" value="'.\yii\helpers\Html::encode($model->date['from'] ?? '').'">';
                                 ?>
                             </div>
                             <div class="col-3 col-md-3 col-sm-12 dol-lg-3 col-xl-3 mb-3" id="to1">
                                 <label for="nameWithTitle" class="form-label">تاریخ اتمام دوره *</label>
                                 <?php
-                                if(Yii::$app->user->identity->role == 'user' || Yii::$app->user->identity->role == 'cnt' || $model->status != '1')
+                                if($allowEdit && \app\components\CourseAccess::isAdmin())
                                     echo $form->field($model, 'date[to]')->textInput(
                                         [
                                             'class' => 'form-control dob-picker text-start',
@@ -1582,7 +1589,7 @@ $this->registerJs($digit);
                                         ]
                                     )->label(false);
                                 else
-                                    echo '<input type="text" disabled readonly class="form-control text-start" value="'.$model->date['to'].'">';
+                                    echo '<input type="text" disabled readonly class="form-control text-start" value="'.\yii\helpers\Html::encode($model->date['to'] ?? '').'">';
                                 ?>
                             </div>
                             <div class="col-3 col-md-3 col-sm-12 dol-lg-3 col-xl-3 mb-3">
@@ -1634,8 +1641,13 @@ $this->registerJs($digit);
                             </div>
                             <hr class="mt-2">
                             <div class="col-4 col-md-4 col-sm-12 dol-lg-4 col-xl-4 mb-3">
-                                <label for="select2Basic" class="form-label">دانشکده *</label>
+                                <label for="select2Basic" class="form-label">واحد *</label>
                                 <?php
+                                // انتخاب واحد فقط با مدیر سیستم؛ کارشناس واحد و کارگزار واحد خودشان را می‌بینند
+                                if (!\app\components\CourseAccess::canChooseUnit() || !$allowEdit)
+                                    echo '<input type="text" class="form-control" disabled value="' . \yii\helpers\Html::encode(\app\components\UsersDirectory::collegeTitles()[(string) $model->college] ?? '-') . '">'
+                                        . \yii\helpers\Html::hiddenInput('Courses[college]', (string) $model->college);
+                                else
                                 echo $form->field($model, 'college')->dropDownList(
                                     $colleges,
                                     [
@@ -1750,6 +1762,28 @@ $this->registerJs($digit);
                                 </div>
                             </div>
                             <hr class="mb-2">
+                            <div class="col-4 col-md-4 col-sm-12 dol-lg-4 col-xl-4 mb-3">
+                                <label class="form-label" for="edit-server">سرور برگزاری کلاس *</label>
+                                <?php
+                                // دوره‌های قدیمی بدون فیلد: سرور پیش‌فرض اگر کلاس آنلاین دارد، وگرنه «هیچ‌کدام»
+                                $currentServer = (string) $model->classroom_server;
+                                if ($currentServer === '') {
+                                    $effective = \app\components\classroom\ClassroomPlatforms::hasOnlineClass($model) ? \app\components\classroom\ClassroomPlatforms::serverFor($model) : null;
+                                    $currentServer = $effective !== null ? (string) $effective->_id : \app\models\ClassroomServers::NONE;
+                                }
+                                $serverOptions = $servers;
+                                if ($currentServer !== \app\models\ClassroomServers::NONE && !isset($serverOptions[$currentServer])) {
+                                    $inactive = \app\models\ClassroomServers::findById($currentServer);
+                                    if ($inactive !== null)
+                                        $serverOptions[$currentServer] = $inactive->title . ' (غیرفعال)';
+                                }
+                                $serverOptions[\app\models\ClassroomServers::NONE] = 'هیچ‌کدام (برگزاری در سامانه‌ی دیگر / بدون کلاس آنلاین)';
+                                if ($allowEdit)
+                                    echo \yii\helpers\Html::dropDownList('Courses[classroom_server]', $currentServer, $serverOptions, ['id' => 'edit-server', 'class' => 'form-select', 'required' => true, 'prompt' => 'انتخاب سرور']);
+                                else
+                                    echo '<input type="text" class="form-control" disabled value="' . \yii\helpers\Html::encode($serverOptions[$currentServer] ?? '-') . '">';
+                                ?>
+                            </div>
                             <div class="col-3 col-md-3 col-sm-12 dol-lg-3 col-xl-3 mb-3" id="from">
 
                             </div>
@@ -1790,261 +1824,7 @@ $this->registerJs($digit);
                 </div>
             </div>
             <div class="tab-pane fade" id="id3" role="tabpanel">
-                <?php
-                if ($model->installments != null && $model->prepayment_installments != null) {
-                ?>
-                    <?php $form = ActiveForm::begin(
-                        [
-                            'action' => ['edit_prepayment_installments'],
-                            "method" => "post",
-                        ]
-                    ); ?>
-                    <?= $form->field($model, '_id')->hiddenInput()->label(false); ?>
-                    <div class="row">
-                        <div class="col-md-6">
-                            <div class="mb-3 row">
-                                <label for="html5-text-input" class="col-md-4 col-form-label">مبلغ پیش پرداخت (تومان) *</label>
-                                <div class="col-md-8">
-                                    <?= $form->field($model, 'prepayment_installments')->textInput(
-                                        [
-                                            'class' => 'form-control message-input me-3',
-                                            'type' => 'number',
-                                            'placeholder' => 'مبلغ پیش پرداخت'
-                                        ]
-                                    )->label(false); ?>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-md-6">
-                            <button class="btn btn-primary btn-block">ویرایش پیش پرداخت</button>
-                        </div>
-                    </div>
-                    <?php ActiveForm::end(); ?>
-                        <hr>
-                    <div class="card-header d-flex justify-content-between align-items-center">
-                        <h4 class="card-title mb-0">اقساط ثبت شده</h4>
-                        <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#add_single_installment">
-                            افزودن قسط
-                        </button>
-                        <div class="modal fade" id="add_single_installment" tabindex="-1" style="display: none;" aria-hidden="true">
-                            <div class="modal-dialog modal-dialog-centered" role="document">
-                                <div class="modal-content">
-                                    <div class="modal-header">
-                                        <h5 class="modal-title secondary-font" id="modalCenterTitle">افزودن قسط</h5>
-                                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                                    </div>
-                                    <div class="modal-body">
-                                        <?php $form = ActiveForm::begin(
-                                            [
-                                                'action' => ['add_single_installment'],
-                                                "method" => "post",
-                                            ]
-                                        ); ?>
-                                        <input type="hidden" name="_id" value="<?= (string) $model->_id ?>">
-                                        <div class="row">
-                                            <div class="col-6 col-md-6 col-lg-6 col-sm-12 mb-3">
-                                                <label for="nameWithTitle" class="form-label">تاریخ پرداخت: +</label>
-                                                <input type="text" name="deadline" class="form-control text-start dob-picker" required>
-                                            </div>
-                                            <div class="col-6 col-md-6 col-lg-6 col-sm-12 mb-3">
-                                                <label for="emailWithTitle" class="form-label">مبلغ (تومان): *</label>
-                                                <input type="number" name="amount" class="form-control text-start" required>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="modal-footer">
-                                        <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">
-                                            بستن
-                                        </button>
-                                        <button type="submit" class="btn btn-primary">افزودن</button>
-                                        <?php ActiveForm::end(); ?>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <?php
-                    $installmentRow = 0;
-                    $k = 1;
-                    if($model->installments != null)
-                    {
-                        ?>
-                        <div class="table-responsive text-nowrap">
-                            <table class="table table-sm">
-                                <thead>
-                                    <tr>
-                                        <th>ردیف</th>
-                                        <th>مبلغ قسط (تومان)</th>
-                                        <th>تاریخ پرداخت</th>
-                                        <th>عملیات</th>
-                                    </tr>
-                                </thead>
-                                <tbody class="table-border-bottom-0">
-                                <?php
-                                foreach ($model->installments as $installment)
-                                {
-                                    $editInstallment = 'editInstallment' . rand();
-                                    $deleteInstallment = 'deleteInstallment' . rand();
-                                    $installmentDeadline = explode('-', $installment['deadline']);
-                                    ?>
-                                <tr>
-                                    <th scope="row"><?= $k++ ?></th>
-                                    <td><?= number_format($installment['amount']) ?></td>
-                                    <td><?= $installmentDeadline[0] . '/' . $installmentDeadline[1] . '/' . $installmentDeadline[2] ?></td>
-                                    <td>
-                                        <div class="btn-group" role="group" aria-label="Basic example">
-                                            <button type="button" class="btn btn-label-linkedin" data-bs-toggle="modal" data-bs-target="#<?= $editInstallment ?>">ویرایش</button>
-                                            <button type="button" class="btn btn-label-pinterest" data-bs-toggle="modal" data-bs-target="#<?= $deleteInstallment ?>">حذف</button>
-                                        </div>
-                                    </td>
-                                </tr>
-
-                                    <div class="modal fade" id="<?= $editInstallment ?>" tabindex="-1" style="display: none;" aria-hidden="true">
-                                        <div class="modal-dialog modal-dialog-centered" role="document">
-                                            <div class="modal-content">
-                                                <div class="modal-header">
-                                                    <h5 class="modal-title secondary-font" id="modalCenterTitle">ویرایش قسط</h5>
-                                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                                                </div>
-                                                <div class="modal-body">
-                                                    <?php $form = ActiveForm::begin(
-                                                        [
-                                                            'action' => ['edit_installments'],
-                                                            "method" => "post",
-                                                        ]
-                                                    ); ?>
-                                                    <?php echo $form->field($model, '_id')->hiddenInput()->label(false);
-                                                    ?>
-                                                    <input type="hidden" name="row" value="<?= $installmentRow ?>">
-                                                    <div class="row">
-                                                        <div class="col col-md-6 col-lg-6 col-sm-12 mb-3">
-                                                            <label for="nameWithTitle" class="form-label">تاریخ پرداخت *</label>
-                                                            <?php echo $form->field($model, 'installments[' . $installmentRow . '][deadline]')->textInput(
-                                                                [
-                                                                    'class' => 'form-control dob-picker text-start',
-                                                                    'required' => true,
-                                                                    'oninvalid' => 'this.setCustomValidity(\'لطفا تاریخ پرداخت قسط را وارد کنید\')',
-                                                                    'oninput' => 'setCustomValidity(\'\')',
-                                                                    'id' => '',
-                                                                ]
-                                                            )->label(false);
-                                                            ?>
-                                                        </div>
-                                                        <div class="col col-md-6 col-lg-6 col-sm-12 mb-3">
-                                                            <label for="nameWithTitle" class="form-label">مبلغ قسط (تومان) *</label>
-                                                            <?php echo $form->field($model, 'installments[' . $installmentRow . '][amount]')->textInput(
-                                                                [
-                                                                    'class' => 'form-control text-start',
-                                                                    'required' => true,
-                                                                    'oninvalid' => 'this.setCustomValidity(\'لطفا مبلغ قسط را وارد کنید\')',
-                                                                    'oninput' => 'setCustomValidity(\'\')',
-                                                                    'id' => '',
-                                                                    'type' => 'number',
-                                                                ]
-                                                            )->label(false);
-                                                            ?>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                                <div class="modal-footer">
-                                                    <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">
-                                                        بستن
-                                                    </button>
-                                                    <button type="submit" class="btn btn-primary">ویرایش قسط</button>
-                                                    <?php ActiveForm::end(); ?>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="modal fade" id="<?= $deleteInstallment ?>" tabindex="-1" style="display: none;" aria-hidden="true">
-                                        <div class="modal-dialog modal-dialog-centered" role="document">
-                                            <div class="modal-content">
-                                                <div class="modal-header">
-                                                    <h5 class="modal-title secondary-font" id="modalCenterTitle">ویرایش قسط</h5>
-                                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                                                </div>
-                                                <div class="modal-body">
-                                                    <?php $form = ActiveForm::begin(
-                                                        [
-                                                            'action' => ['delete_installments'],
-                                                            "method" => "post",
-                                                        ]
-                                                    ); ?>
-                                                    <?php echo $form->field($model, '_id')->hiddenInput()->label(false);
-                                                    ?>
-                                                    <input type="hidden" name="row" value="<?= $installmentRow ?>">
-                                                    <div class="row">
-                                                        آیا از حذف قسط با مبلغ <?= number_format($installment['amount']) ?> تومان و تاریخ بازپرداخت <?= $installmentDeadline[0] . '/' . $installmentDeadline[1] . '/' . $installmentDeadline[2] ?> مطمئن هستید؟
-                                                    </div>
-                                                </div>
-                                                <div class="modal-footer">
-                                                    <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">
-                                                        بستن
-                                                    </button>
-                                                    <button type="submit" class="btn btn-primary">بله مطمئنم</button>
-                                                    <?php ActiveForm::end(); ?>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <?php
-                                    $installmentRow++;
-                                }
-                                ?>
-                                </tbody>
-                            </table>
-                        </div>
-                            <?php
-                    }
-                } else {
-                    ?>
-                    <div class="alert alert-warning text-dark" role="alert">برای این دوره شرایط اقساطی ثبت نشده است</div>
-                    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#add_installment">
-                        افزودن شرایط اقساطی
-                    </button>
-                    <div class="modal fade" id="add_installment" tabindex="-1" style="display: none;" aria-hidden="true">
-                        <div class="modal-dialog modal-dialog-centered" role="document">
-                            <div class="modal-content">
-                                <div class="modal-header">
-                                    <h5 class="modal-title secondary-font" id="modalCenterTitle">افزودن شرایط قسط</h5>
-                                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                                </div>
-                                <div class="modal-body">
-                                    <?php $form = ActiveForm::begin(
-                                        [
-                                            'action' => ['add_installment'],
-                                            "method" => "post",
-                                        ]
-                                    ); ?>
-                                    <input type="hidden" name="_id" value="<?= (string) $model->_id ?>">
-                                    <div class="row">
-                                        <div class="col-12 col-md-12 col-lg-12 col-sm-12 mb-3">
-                                            <label for="nameWithTitle" class="form-label">مبلغ پیش پرداخت (تومان): *</label>
-                                            <input type="number" name="prepayment_installments" class="form-control text-start only-english-digits" required>
-                                        </div>
-                                        <div class="col-6 col-md-6 col-lg-6 col-sm-12 mb-3">
-                                            <label for="nameWithTitle" class="form-label">تاریخ پرداخت قسط: *</label>
-                                            <input type="text" id="installment_date" name="deadline" class="form-control text-start dob-picker" required>
-                                        </div>
-                                        <div class="col-6 col-md-6 col-lg-6 col-sm-12 mb-3">
-                                            <label for="emailWithTitle" class="form-label">مبلغ قسط (تومان): *</label>
-                                            <input type="number" name="amount" class="form-control text-start only-english-digits" required>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="modal-footer">
-                                    <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">
-                                        بستن
-                                    </button>
-                                    <button type="submit" class="btn btn-primary">افزودن</button>
-                                    <?php ActiveForm::end(); ?>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                <?php
-                }
-                ?>
+                <?= $this->render('_installments', ['model' => $model, 'allowEdit' => $allowEdit]) ?>
             </div>
             <div class="tab-pane fade" id="id1" role="tabpanel">
                 <div class="card-header d-flex justify-content-between align-items-center">

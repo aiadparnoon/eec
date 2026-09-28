@@ -71,7 +71,7 @@ class PackagesController extends Controller
                         }
                     ],
                     [
-                        'actions' => ['create-package', 'new', 'new_user' ,'show_user_detail','add_user_from_list','check_excel_file','add_user_from_exel','change_status','change_role','delete_user_from_course','add_user_to_adobe','register_class_in_adobe','contract_file'],
+                        'actions' => ['create-package', 'new', 'unit-options', 'installments-plan', 'new_user' ,'show_user_detail','add_user_from_list','check_excel_file','add_user_from_exel','change_status','change_role','delete_user_from_course','add_user_to_adobe','register_class_in_adobe','contract_file'],
                         'allow' => true,
                         'roles' => ['@'],
                         'matchCallback' => function ($rule, $action) {
@@ -101,6 +101,9 @@ class PackagesController extends Controller
                 'class' => VerbFilter::className(),
                 'actions' => [
                     'logout' => ['post'],
+                    'new' => ['post'],
+                    'edit' => ['post'],
+                    'installments-plan' => ['post'],
                 ],
             ],
         ];
@@ -123,13 +126,19 @@ class PackagesController extends Controller
             return false;
         if (Yii::$app->user->isGuest)
             return true;
+        // اقساط فقط از فرم کامل «شرایط اقساطی» (installments-plan) با کنترل مجموع و تاریخ‌ها
+        if (in_array($action->id, ['add_installment', 'add_single_installment', 'edit_installments', 'delete_installments', 'edit_prepayment_installments'], true)) {
+            Yii::$app->session->setFlash(\frontend\controllers\CourseMembersController::FLASH, ['type' => 'error', 'message' => 'شرایط اقساطی را از فرم تب «اقساط» ویرایش کنید']);
+            $this->redirect(\app\components\SafeRedirect::referrer(['index']))->send();
+            return false;
+        }
         // افزودن عضو از اکسل برای دوره‌های کوتاه‌مدت فقط از مسیر جدید (courses/members-check) با همه‌ی کنترل‌ها
         if (in_array($action->id, ['check_excel_file', 'add_user_from_exel'], true)) {
             $id = Yii::$app->request->post('courseId', Yii::$app->request->post('packageId_', Yii::$app->request->post('packageId')));
             $course = is_string($id) && preg_match('/^[a-f0-9]{24}$/i', trim($id)) ? Courses::findOne(trim($id)) : null;
-            if ($course === null || (string) $course->type === '1') {
+            if ($course === null || in_array((string) $course->type, ['1', '2'], true)) {
                 if (Yii::$app->request->isAjax)
-                    throw new \yii\web\ForbiddenHttpException('برای دوره‌های کوتاه‌مدت از «افزودن از فایل اکسل» در صفحه‌ی دوره استفاده کنید');
+                    throw new \yii\web\ForbiddenHttpException('از «افزودن از فایل اکسل» در تب اعضای صفحه‌ی دوره استفاده کنید');
                 Yii::$app->session->setFlash('status', '2');
                 $this->redirect(\app\components\SafeRedirect::referrer(['index']))->send();
                 return false;
@@ -240,91 +249,25 @@ class PackagesController extends Controller
         return Yii::$app->response->sendFile($path, basename($path));
     }
 
+    /**
+     * فرم ثبت دوره‌ی میان‌مدت (صفحه‌ی جدید، همه‌ی قواعد در PackageForm).
+     */
     public function actionCreatePackage()
     {
-        list($colleges, $capacityType) = $this->resolveCreatePackageOptions();
+        if (!in_array(\app\components\CourseAccess::role(), ['user', 'cnt', 'emp', 'broker'], true))
+            return $this->redirect(['index']);
         return $this->render('create-package', [
-            'colleges' => ArrayHelper::map($colleges, function ($model) {
-                return (string) $model->_id;
-            }, 'title'),
-            'myCollege' => $colleges,
-            'capacityType' => $capacityType
+            'units' => \app\components\CourseOptions::creatableUnits(),
+            'servers' => \app\models\ClassroomServers::activeOptions(),
+            'capacityTypes' => \app\components\CourseOptions::capacityTypes(),
         ]);
     }
 
-    /**
-     * Builds the ($colleges, $capacityType) pair actionCreatePackage() needs for
-     * the "ثبت دوره جدید" (create-package) GET view. Extracted into its own
-     * method (2026-08-27) so actionNew()'s failure path (see below) can re-render
-     * the exact same form - with the user's already-typed data and the specific
-     * validation errors kept - instead of redirecting to a blank page, without
-     * duplicating this role-based logic in two places.
-     *
-     * "نامحدود" (unlimited) is intentionally left out of $capacityType here: new
-     * courses can no longer be created with that capacity type (existing courses
-     * that already have it keep working - see Courses::validateCapacityTypeNotDisabled()
-     * and edit-package.php).
-     *
-     * @return array [$colleges, $capacityType]
-     */
-    private function resolveCreatePackageOptions()
+    /** کارگزاران (با قرارداد)، مدرسان و دروس یک واحد برای فرم ثبت (JSON) */
+    public function actionUnitOptions($id)
     {
-        $capacityType = null;
-        if (Yii::$app->user->identity->role == 'user' || Yii::$app->user->identity->role == 'cnt')
-        {
-            $colleges = Colleges::find()->all();
-            $capacityType = array(
-                '2' => 'محدود',
-                '3' => 'سازمانی'
-            );
-        }
-        else
-            $colleges = Colleges::find()->where(['_id' => Yii::$app->user->identity->college])->all();
-        if(Yii::$app->user->identity->role == 'emp' || Yii::$app->user->identity->role == 'broker')
-        {
-            $capacityFlag = 0;
-            $collegeDetail =Colleges::findOne(Yii::$app->user->identity->college);
-            if($collegeDetail != null)
-            {
-                if(Yii::$app->user->identity->role == 'emp')
-                {
-                    if($collegeDetail->financial_info == null)
-                        $capacityFlag = 1;
-                    else if($collegeDetail->financial_info['id'] == '')
-                        $capacityFlag = 1;
-                }
-                else if(Yii::$app->user->identity->role == 'broker')
-                {
-                    if($collegeDetail->financial_info == null)
-                        $capacityFlag = 1;
-                    else if($collegeDetail->financial_info['id'] == '')
-                        $capacityFlag = 1;
-                    else
-                    {
-                        $broker = Brokers::find()->where(['connector_info.mobile' => Yii::$app->user->identity->username])->one();
-                        if($broker != null)
-                        {
-                            if($broker->financial_info == null)
-                                $flag = 1;
-                            else if($broker->financial_info['id'] == '')
-                                $flag = 1;
-                        }
-                    }
-                }
-            }
-            else
-                $capacityFlag = 1;
-            if($capacityFlag == 0)
-                $capacityType = array(
-                    '2' => 'محدود',
-                    '3' => 'سازمانی'
-                );
-            else
-                $capacityType = array(
-                    '3' => 'سازمانی'
-                );
-        }
-        return [$colleges, $capacityType];
+        Yii::$app->response->format = \yii\web\Response::FORMAT_JSON;
+        return \app\components\CourseOptions::unitOptions($id);
     }
 
     public function actionEditPackage($_id)
@@ -766,263 +709,145 @@ class PackagesController extends Controller
         return Yii::$app->response->sendFile('./newfile.xlsx', $file_name);
     }
 
+    /**
+     * ثبت دوره‌ی میان‌مدت. فقط فیلدهای مجاز خوانده می‌شوند (PackageForm)؛ وضعیت، کد مجوز و ثبت‌کننده از فرم
+     * پذیرفته نمی‌شوند. تصویر و قرارداد با SecureUpload (نوع واقعی فایل، نام تصادفی) ذخیره می‌شوند.
+     */
     public function actionNew()
     {
-        if (Yii::$app->request->isPost)
-        {
-            if(isset($_POST['Courses']['lessons']))
-            {
-                $model = new Courses();
-                $model->scenario = Courses::SCENARIO_CREATE_PACKAGE;
-                $model->load(Yii::$app->request->post());
-                if(isset($_POST['Courses']['broker']))
-                    if(Yii::$app->request->post()['Courses']['broker']['_id'] == null || Yii::$app->request->post()['Courses']['broker']['_id'] == '')
-                        $model->broker = null;
-                // اقساط (اگه کاربر توی فرم شرایط اقساطی اضافه کرده باشه) - قبلاً
-                // اینجا نبود؛ بعد از اولین $model->save() موفق ست می‌شد و توی
-                // یک save() دومِ بدون هیچ چک خطایی ذخیره می‌شد (یعنی اگه همون
-                // save دوم به هر دلیلی fail می‌شد - مثلاً به خاطر ولیدیشن‌های
-                // جدید تغییر ۵ - کاربر پیغام موفقیت می‌دید ولی اقساط واقعاً
-                // ذخیره نمی‌شد). با انتقال این بخش به همینجا (قبل از همون
-                // save اولی که پایین‌تر با validate واقعی و مسیر
-                // renderCreatePackageErrors() چک می‌شه)، اعتبارسنجی اقساط
-                // (Courses::validateInstallmentsAgainstCourse) دقیقاً مثل
-                // بقیه‌ی فیلدهای فرم عمل می‌کنه - بدون تغییر در رفتار قبلیِ
-                // موفقیت‌آمیز. (2026-08-28)
-                if(isset($_POST['installments']) && isset($_POST['Courses']['prepayment_installments']))
-                    if($_POST['Courses']['prepayment_installments'] != '')
-                    {
-                        $model->installments = Yii::$app->request->post('installments');
-                        $model->prepayment_installments = $_POST['Courses']['prepayment_installments'];
-                    }
-                $model->preview_image = uniqid() . '.jpg';
-                $model->type = '2';
-                $model->credit = '0';
-                $model->show_in_site = true;
-                if(isset($_POST['send_to_admin']))
-                {
-                    $college = Colleges::findOne($model->college);
-                    if(Yii::$app->user->identity->role == 'user')
-                    {
-                        $model->status = '1';
-                        // Get License Code For Admin
-                        $lastLicense = Generals::find()->where(['type' => 'license_code'])->one();
-                        if($lastLicense != null)
-                        {
-                            $model->license_code = $college->prefix.'-'.(string) ($lastLicense->data + 1);
-                            $lastLicense->updateCounters(['data' => 1]);
-                            $lastLicense->save();
-                        }
-                    }
-                    else
-                    {
-                        if(Yii::$app->user->identity->role == 'broker' || (string) $college->_id == '65afa2ea5136ec5b5b0c4064')
-                            $model->status = '7';
-                        else
-                            $model->status = '2';
-                    }
-                }
-                else
-                    $model->status = '3';
-                $model->registrant = Yii::$app->user->identity->username;
-                if ($_FILES['Courses']['name']['contract_file'] != '')
-                {
-                    $file = UploadedFile::getInstance($model, 'contract_file');
-                    $file_ext = $file->extension;
-                    $file_name = uniqid() . '.' . $file_ext;
-                    $file->saveAs('../../frontend/web/contract_files/' . $file_name);
-                    if (UploadedFile::getInstance($model, 'contract_file') != null)
-                        $model->contract_file = $file_name;
-                }
-                if ($model->save())
-                {
-                    // Calculating the member registration deadline
-                    $startDate = $model->date['from'];
-                    $endDate = $model->date['to'];
+        $model = new Courses();
+        $model->scenario = Courses::SCENARIO_CREATE_PACKAGE;
+        if (!\app\components\PackageForm::apply($model, Yii::$app->request->post('Courses'), true))
+            return $this->packageBack('error', \app\components\PackageForm::$error, ['create-package']);
 
-                    $start = DateTime::createFromFormat('Y-m-d', $startDate);
-                    $end = DateTime::createFromFormat('Y-m-d', $endDate);
+        $role = \app\components\CourseAccess::role();
+        $unit = (string) $model->college;
+        $model->type = '2';
+        $model->credit = '0';
+        $model->show_in_site = true;
+        $model->modified = false;
+        $model->registrant = (string) Yii::$app->user->identity->username;
+        if (Yii::$app->request->post('draft') !== null && $role !== 'user')
+            $model->status = \app\components\CourseStatus::DRAFT;
+        else if ($role === 'user' || $unit === CoursesController::AUTO_APPROVE_UNIT)
+            $model->status = \app\components\CourseStatus::ACTIVE;
+        else if ($role === 'broker' || $unit === CoursesController::UNIT_REVIEW_UNIT)
+            $model->status = \app\components\CourseStatus::AWAITING_UNIT;
+        else
+            $model->status = \app\components\CourseStatus::AWAITING;
 
-                    if ($start && $end && $end > $start) {
-                        $interval = $start->diff($end);
-                        $quarterDays = intval($interval->days / 4);
-
-                        $deadline = clone $start;
-                        $deadline->add(new DateInterval('P' . $quarterDays . 'D'));
-                        $model->deadline_date = $deadline->format('Y-m-d');
-                    } else {
-                        $model->deadline_date = null;
-                    }
-                    $model->type = '2';
-                    $model->save();
-                    // Calculating the member registration deadline
-                    if($model->college == '663b1d28c9c6ce2e65073e22' && ($model->license_code == '' || $model->license_code == null))
-                    {
-                        $model->status = '1';
-                        // Get License Code For Admin
-                        $lastLicense = Generals::find()->where(['type' => 'license_code'])->one();
-                        if($lastLicense != null)
-                        {
-                            $college = Colleges::findOne($model->college);
-                            $model->license_code = $college->prefix.'-'.(string) ($lastLicense->data + 1);
-                            $lastLicense->updateCounters(['data' => 1]);
-                            $lastLicense->save();
-                        }
-                    }
-                    //Convert Image in Base64 to JPG
-                    $createdImage = fopen('../../frontend/web/package_images/'.$model->preview_image, "wb") or die("Unable to open file!");
-                    $imgData = explode(',', Yii::$app->request->post('image'));
-                    fwrite($createdImage, base64_decode($imgData[1]));
-                    fclose($createdImage);
-
-                    // Call AdobeConnect For Create Meetings Course
-                    if((Yii::$app->user->identity->role == 'user' || $model->college == '663b1d28c9c6ce2e65073e22') && ($model->content_type == '1' || $model->content_type == '2'))
-                    {
-                        $adminRole = Admin::find()->where(['role' => 'user'])->one();
-                        if($adminRole != null)
-                        {
-                            $curl = curl_init();
-
-                            curl_setopt_array($curl, array(
-                                CURLOPT_URL => Yii::getAlias('@baseUrl').'/adobe-connect/create-meeting/'.(string) $model->_id,
-                                CURLOPT_RETURNTRANSFER => true,
-                                CURLOPT_ENCODING => '',
-                                CURLOPT_MAXREDIRS => 10,
-                                CURLOPT_TIMEOUT => 0,
-                                CURLOPT_FOLLOWLOCATION => true,
-                                CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-                                CURLOPT_CUSTOMREQUEST => 'POST',
-                                CURLOPT_HTTPHEADER => array(
-                                    '_id: '.(string) $adminRole->_id
-                                ),
-                            ));
-                            $response = curl_exec($curl);
-                            if(property_exists($response,'status'))
-                            {
-                                if($response->status == 'ok')
-                                    $model->adobe_status = '1';
-                                else
-                                    $model->adobe_status = '0';
-                            }
-                            else
-                                $model->adobe_status = '0';
-                            curl_close($curl);
-                        }
-                    }
-                    // Call AdobeConnect For Create Meetings Course
-//                        if($model->discount_price == '')
-//                            $model->discount_price = $model->price;
-                    // اقساط حالا قبل از اولین save() ست می‌شن (بالاتر) - همونجا
-                    // هم با validate واقعی چک می‌شن؛ اینجا دیگه لازم نیست.
-                    $model->save();
-                    if($model->adobe_status === '0')
-                        Yii::$app->session->setFlash('status', '11');
-                    else
-                        Yii::$app->session->setFlash('status', '1');
-                }
-                else
-                {
-                    // اعتبارسنجی fail شد: به‌جای ریدایرکت به لیست دوره‌ها (که فرم و
-                    // پیغام‌های خطا رو گم می‌کرد)، همون فرم رو با دقیقاً همون
-                    // اطلاعاتی که کاربر وارد کرده بود و خطاهای دقیق هر فیلد دوباره
-                    // نشون می‌دیم. (2026-08-27)
-                    return $this->renderCreatePackageErrors($model);
-                }
-            }
-            else
-                Yii::$app->session->setFlash('status','3');
+        $image = UploadedFile::getInstance($model, 'preview_image');
+        if ($image !== null) {
+            $name = \app\components\SecureUpload::save($image, 'image', '@frontend/web/package_images');
+            if ($name === null)
+                return $this->packageBack('error', 'تصویر دوره: ' . \app\components\SecureUpload::$lastError, ['create-package']);
+            $model->preview_image = $name;
+        } else {
+            $model->preview_image = 'default_course.png';
         }
-        return $this->redirect(['../packages']);
+        $contract = UploadedFile::getInstance($model, 'contract_file');
+        if ($contract !== null) {
+            $name = \app\components\SecureUpload::save($contract, 'document', '@frontend/web/contract_files');
+            if ($name === null)
+                return $this->packageBack('error', 'فایل قرارداد: ' . \app\components\SecureUpload::$lastError, ['create-package']);
+            $model->contract_file = $name;
+        }
+        if (!$model->validate()) {
+            \app\components\SecureUpload::delete('@frontend/web/contract_files', $model->contract_file);
+            return $this->packageBack('error', current($model->getFirstErrors()) ?: 'اطلاعات وارد شده معتبر نیست', ['create-package']);
+        }
+        if ($model->status === \app\components\CourseStatus::ACTIVE && !\app\components\CourseOptions::assignLicenseCode($model))
+            return $this->packageBack('error', 'تولید کد مجوز ممکن نشد (کد واحد یا شمارنده‌ی کد مجوز تعریف نشده است)', ['create-package']);
+        if (!$model->save(false))
+            return $this->packageBack('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید', ['create-package']);
+
+        $message = 'دوره «' . $model->title['main_fa'] . '» ثبت شد';
+        if ($model->status === \app\components\CourseStatus::ACTIVE && \app\components\classroom\ClassroomPlatforms::hasOnlineClass($model)) {
+            $result = \app\components\classroom\ClassroomPlatforms::forCourse($model)->createCourseMeetings((string) $model->_id);
+            $model->adobe_status = $result === true ? '1' : '0';
+            $model->save(false, ['adobe_status']);
+            if ($result !== true)
+                return $this->packageBack('warning', $message . '؛ اما ساخت کلاس آنلاین ناموفق بود', ['edit-package', '_id' => (string) $model->_id]);
+        }
+        return $this->packageBack('success', $message, ['edit-package', '_id' => (string) $model->_id]);
     }
 
     /**
-     * Re-renders "create-package" after a failed save with $model's validation
-     * errors and already-typed values intact. Uses the same option-building
-     * helper the normal GET view uses, so the dropdowns are always consistent.
+     * ویرایش مشخصات دوره‌ی میان‌مدت (دروس و اقساط در تب‌های خودشان).
      */
-    private function renderCreatePackageErrors(Courses $model)
-    {
-        list($colleges, $capacityType) = $this->resolveCreatePackageOptions();
-        return $this->render('create-package', [
-            'colleges' => ArrayHelper::map($colleges, function ($m) {
-                return (string) $m->_id;
-            }, 'title'),
-            'myCollege' => $colleges,
-            'capacityType' => $capacityType,
-            'model' => $model,
-        ]);
-    }
-
     public function actionEdit()
     {
-        if (Yii::$app->request->isPost) {
-            $find = Courses::findOne(Yii::$app->request->post()['Courses']['_id']);
-            if ($find != null)
-            {
-                if ($_FILES['Courses']['size']['preview_image'] <= Yii::getAlias('@uploadSize'))
-                {
-                    $preImage = $find->preview_image;
-                    $find->scenario = Courses::SCENARIO_EDIT_PACKAGE;
-                    $find->load(Yii::$app->request->post());
-                    if ($_FILES['Courses']['name']['preview_image'] != '')
-                    {
-                        if ($preImage != '' && $preImage != null && $preImage != 'default_course.png')
-                            if(file_exists('../../frontend/web/package_images/' . $preImage))
-                                unlink('../../frontend/web/package_images/' . $preImage);
-                        $file = UploadedFile::getInstance($find, 'preview_image');
-                        $file_ext = $file->extension;
-                        $file_name = uniqid() . '.' . $file_ext;
-                        $file->saveAs('../../frontend/web/package_images/' . $file_name);
-                        if (UploadedFile::getInstance($find, 'preview_image') != null)
-                            $find->preview_image = $file_name;
-                    }
-                    if ($_FILES['Courses']['name']['contract_file'] != '')
-                    {
-                        $file = UploadedFile::getInstance($find, 'contract_file');
-                        $file_ext = $file->extension;
-                        $file_name = uniqid() . '.' . $file_ext;
-                        $file->saveAs('../../frontend/web/contract_files/' . $file_name);
-                        if (UploadedFile::getInstance($find, 'contract_file') != null)
-                            $find->contract_file = $file_name;
-                    }
-                    if ($find->save()) {
-                        {
-                            // Calculating the member registration deadline
-                            $startDate = $find->date['from'];
-                            $endDate = $find->date['to'];
+        $input = Yii::$app->request->post('Courses');
+        $id = is_array($input) && isset($input['_id']) && is_string($input['_id']) && preg_match('/^[a-f0-9]{24}$/i', $input['_id']) ? $input['_id'] : null;
+        $model = $id === null ? null : Courses::find()->where(['_id' => $id, 'type' => '2'])->one();
+        if ($model === null || !\app\components\CourseAccess::canEdit($model))
+            return $this->packageBack('error', 'دوره یافت نشد یا امکان ویرایش آن را ندارید (دوره‌ی تأییدشده را فقط مدیر سیستم ویرایش می‌کند)', ['index']);
+        $back = ['edit-package', '_id' => (string) $model->_id];
+        $oldServer = (string) $model->classroom_server;
+        $model->scenario = Courses::SCENARIO_EDIT_PACKAGE;
+        if (!\app\components\PackageForm::apply($model, $input, false))
+            return $this->packageBack('error', \app\components\PackageForm::$error, $back);
 
-                            $start = DateTime::createFromFormat('Y-m-d', $startDate);
-                            $end = DateTime::createFromFormat('Y-m-d', $endDate);
-                            if ($start && $end && $end > $start)
-                            {
-                                $interval = $start->diff($end);
-                                $quarterDays = intval($interval->days / 4);
-                                $deadline = clone $start;
-                                $deadline->add(new DateInterval('P' . $quarterDays . 'D'));
-                                $find->deadline_date = $deadline->format('Y-m-d');
-                            }
-                            else
-                            {
-                                $find->deadline_date = null;
-                            }
-                            $find->save();
-                            // Calculating the member registration deadline
-                            Yii::$app->session->setFlash('status', '1');
-                        }
-                    } else {
-                        // اعتبارسنجی fail شد: به‌جای ریدایرکت (که رکورد قدیمی رو
-                        // دوباره از دیتابیس می‌خوند و همه‌چیز رو گم می‌کرد)، همون
-                        // فرم رو با دقیقاً همون تغییراتی که کاربر داده بود و
-                        // خطاهای دقیق هر فیلد دوباره نشون می‌دیم. (2026-08-27)
-                        return $this->renderEditPackageView($find);
-                    }
-                }
-                else
-                    Yii::$app->session->setFlash('status', '18');
+        $image = UploadedFile::getInstance($model, 'preview_image');
+        if ($image !== null) {
+            $name = \app\components\SecureUpload::save($image, 'image', '@frontend/web/package_images');
+            if ($name === null)
+                return $this->packageBack('error', 'تصویر دوره: ' . \app\components\SecureUpload::$lastError, $back);
+            $old = (string) $model->getOldAttribute('preview_image');
+            if ($old !== '' && $old !== 'default_course.png')
+                \app\components\SecureUpload::delete('@frontend/web/package_images', $old);
+            $model->preview_image = $name;
+        }
+        $contract = UploadedFile::getInstance($model, 'contract_file');
+        if ($contract !== null) {
+            $name = \app\components\SecureUpload::save($contract, 'document', '@frontend/web/contract_files');
+            if ($name === null)
+                return $this->packageBack('error', 'فایل قرارداد: ' . \app\components\SecureUpload::$lastError, $back);
+            $model->contract_file = $name;
+        }
+        if (!$model->validate())
+            return $this->packageBack('error', current($model->getFirstErrors()) ?: 'اطلاعات وارد شده معتبر نیست', $back);
+        // ویرایش دوره‌ی «نیاز به اصلاح» = ارسال مجدد (دوره‌ی کارگزار پس از برگشت مدیر، دوباره از واحد می‌گذرد)
+        if (in_array((string) $model->status, [\app\components\CourseStatus::NEEDS_CORRECTION, \app\components\CourseStatus::UNIT_CORRECTION], true))
+            \app\components\CourseStatus::submit($model, \app\components\CourseAccess::role() === 'broker');
+        if (!$model->save(false))
+            return $this->packageBack('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید', $back);
+
+        $message = 'دوره «' . $model->title['main_fa'] . '» ویرایش شد';
+        if ($oldServer !== (string) $model->classroom_server && \app\components\classroom\ClassroomPlatforms::hasOnlineClass($model)
+            && in_array((string) $model->status, [\app\components\CourseStatus::ACTIVE, \app\components\CourseStatus::APPROVED_INACTIVE], true)) {
+            $result = \app\components\classroom\ClassroomPlatforms::forCourse($model)->createCourseMeetings((string) $model->_id);
+            if ($result !== true) {
+                $model->adobe_status = '0';
+                $model->save(false, ['adobe_status']);
+                return $this->packageBack('warning', $message . '؛ اما ساخت کلاس آنلاین روی سرور جدید ناموفق بود', $back);
             }
-            return $this->redirect(Yii::$app->request->referrer);
-        } else
-            return $this->redirect(Yii::$app->request->referrer);
+        }
+        return $this->packageBack('success', $message, $back);
+    }
+
+    /**
+     * ذخیره‌ی کامل شرایط اقساطی (پیش‌پرداخت + اقساط) با قواعد PackageForm::checkPlan.
+     */
+    public function actionInstallmentsPlan($_id)
+    {
+        $model = is_string($_id) && preg_match('/^[a-f0-9]{24}$/i', $_id) ? Courses::find()->where(['_id' => $_id, 'type' => '2'])->one() : null;
+        if ($model === null || !\app\components\CourseAccess::canEdit($model))
+            return $this->packageBack('error', 'دوره یافت نشد یا امکان ویرایش آن را ندارید', ['index']);
+        $back = ['edit-package', '_id' => (string) $model->_id, 'tab' => 'tab-id3'];
+        if (\app\components\PackageForm::planInUse($model) && !\app\components\CourseAccess::isAdmin())
+            return $this->packageBack('error', 'دانشپذیرانی با این شرایط اقساطی ثبت‌نام کرده‌اند؛ تغییر آن فقط توسط مدیر سیستم ممکن است', $back);
+        if (!\app\components\PackageForm::applyInstallments($model, Yii::$app->request->post('prepayment_installments'), Yii::$app->request->post('installments')))
+            return $this->packageBack('error', \app\components\PackageForm::$error, $back);
+        if (!$model->save(false, ['installments', 'prepayment_installments']))
+            return $this->packageBack('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید', $back);
+        return $this->packageBack('success', empty($model->installments) ? 'شرایط اقساطی حذف شد؛ دوره فقط نقدی است' : 'شرایط اقساطی ذخیره شد', $back);
+    }
+
+    private function packageBack($type, $message, $url)
+    {
+        Yii::$app->session->setFlash(\frontend\controllers\CourseMembersController::FLASH, ['type' => $type, 'message' => $message]);
+        return $this->redirect($url);
     }
 
     public function actionBrokers($id)

@@ -37,6 +37,24 @@ class ShortCourseForm
     {
         self::$error = null;
         $input = is_array($input) ? $input : [];
+        if (!static::applyCommon($model, $input, $isNew))
+            return false;
+        $unit = (string) $model->college;
+        if (!self::applyBroker($model, $input, $unit))
+            return false;
+        if (!self::applyLesson($model, $input, $unit, $isNew))
+            return false;
+        if (!self::applyServer($model, $input))
+            return false;
+        return true;
+    }
+
+    /**
+     * فیلدهای مشترک دوره‌ی کوتاه‌مدت و میان‌مدت: واحد، عنوان‌ها، شهریه و تخفیف، مدت، زمان و محل، نوع دوره،
+     * ظرفیت، توضیحات و مجوز افزودن عضو بدون کیف پول.
+     */
+    protected static function applyCommon(Courses $model, array $input, $isNew)
+    {
         // متن ساده: تگ HTML پذیرفته نمی‌شود (عنوان‌ها در سایت اصلی و گواهی هم نمایش داده می‌شوند)
         $str = function ($value, $max = 250) {
             return is_scalar($value) ? mb_substr(trim(strip_tags((string) $value)), 0, $max, 'UTF-8') : '';
@@ -88,17 +106,15 @@ class ShortCourseForm
             $model->discount_price = $model->price;
 
         $duration = $digits(isset($input['duration']) ? $input['duration'] : '');
-        if (!ctype_digit($duration) || (int) $duration < self::MIN_HOURS)
-            return self::fail('امکان ثبت دوره‌ی کوتاه‌مدت کمتر از ' . self::MIN_HOURS . ' ساعت نیست');
-        if ((int) $duration > self::MAX_HOURS)
-            return self::fail('دوره‌ی بیشتر از ' . self::MAX_HOURS . ' ساعت را از بخش دوره‌های میان‌مدت ثبت کنید');
+        if (($durationError = static::durationError($duration)) !== null)
+            return self::fail($durationError);
         $model->duration = $duration;
 
         $model->time = $str(isset($input['time']) ? $input['time'] : '', 100);
         $model->place = $str(isset($input['place']) ? $input['place'] : '', 200);
         $contentType = isset($input['content_type']) && is_scalar($input['content_type']) ? (string) $input['content_type'] : '';
         // «محتوامحور» فقط برای دوره‌های قدیمی که از قبل همین مقدار را دارند باقی می‌ماند (validator مدل)
-        if (!isset(self::CONTENT_TYPES[$contentType]) && !($contentType === '3' && !$isNew))
+        if (!isset(static::CONTENT_TYPES[$contentType]) && !($contentType === '3' && !$isNew))
             return self::fail('نوع دوره معتبر نیست');
         $model->content_type = $contentType;
 
@@ -120,21 +136,26 @@ class ShortCourseForm
         $identity = CourseAccess::identity();
         if ($identity !== null && ($identity->role === 'user' || $identity->additional_access === true))
             $model->allow_free_add_user = isset($input['allow_free_add_user']) && (string) $input['allow_free_add_user'] === '1';
-
-        if (!self::applyBroker($model, $input, $unit))
-            return false;
-        if (!self::applyLesson($model, $input, $unit, $isNew))
-            return false;
-        if (!self::applyServer($model, $input))
-            return false;
         return true;
+    }
+
+    /**
+     * @return string|null پیام خطا اگر مدت دوره در بازه‌ی این نوع دوره نباشد
+     */
+    protected static function durationError($duration)
+    {
+        if (!ctype_digit($duration) || (int) $duration < self::MIN_HOURS)
+            return 'امکان ثبت دوره‌ی کوتاه‌مدت کمتر از ' . self::MIN_HOURS . ' ساعت نیست';
+        if ((int) $duration > self::MAX_HOURS)
+            return 'دوره‌ی بیشتر از ' . self::MAX_HOURS . ' ساعت را از بخش دوره‌های میان‌مدت ثبت کنید';
+        return null;
     }
 
     /**
      * سرور برگزاری کلاس: یکی از سرورهای فعال (تنظیمات سایت › سرورها) یا «هیچ‌کدام».
      * سروری که قبلاً روی دوره بوده، حتی اگر بعداً غیرفعال شده باشد، حفظ می‌شود.
      */
-    private static function applyServer(Courses $model, $input)
+    protected static function applyServer(Courses $model, $input)
     {
         $value = isset($input['classroom_server']) && is_string($input['classroom_server']) ? $input['classroom_server'] : '';
         if ($value === ClassroomServers::NONE) {
@@ -153,8 +174,11 @@ class ShortCourseForm
     /**
      * کارگزار و قرارداد باید متعلق به همین واحد و فعال باشند؛ کارگزار فقط خودش.
      */
-    private static function applyBroker(Courses $model, $input, $unit)
+    protected static function applyBroker(Courses $model, $input, $unit)
     {
+        // در ویرایش، اگر فرم فیلد کارگزار نداشت (مثلاً برای کارشناس واحد فقط نمایشی است)، کارگزار فعلی حفظ می‌شود
+        if (!$model->isNewRecord && !array_key_exists('broker', $input) && CourseAccess::role() !== 'broker')
+            return true;
         $broker = isset($input['broker']) && is_array($input['broker']) ? $input['broker'] : [];
         $brokerId = isset($broker['_id']) && is_string($broker['_id']) ? $broker['_id'] : '';
         if (CourseAccess::role() === 'broker') {
@@ -263,7 +287,7 @@ class ShortCourseForm
         return $jalali === null ? null : UsersSearch::jalaliToTimestamp(str_replace('-', '/', $jalali), false);
     }
 
-    private static function fail($message)
+    protected static function fail($message)
     {
         self::$error = $message;
         return false;
