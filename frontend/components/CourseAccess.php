@@ -67,6 +67,21 @@ class CourseAccess
     }
 
     /**
+     * واحد(های) خودِ کاربر برای ثبت دوره — بدون واحدهای مرتبط (LINKED_UNITS فقط برای مشاهده است).
+     * کارشناس واحد: واحد حساب کاربری؛ کارگزار: واحد رکورد کارگزار.
+     *
+     * @return string[]
+     */
+    public static function ownUnits()
+    {
+        if (self::role() === 'broker') {
+            $broker = self::broker();
+            return $broker === null ? [] : StudentAccess::normalizeColleges($broker->college);
+        }
+        return self::role() === 'emp' ? StudentAccess::staffColleges() : [];
+    }
+
+    /**
      * رکورد کارگزارِ کاربر جاری (نقش broker)، بر اساس موبایل.
      *
      * @return Brokers|null
@@ -202,7 +217,13 @@ class CourseAccess
             return true;
         if (!in_array(self::role(), ['emp', 'broker'], true))
             return false;
-        return in_array($unitId, self::units(), true);
+        return in_array($unitId, self::ownUnits(), true);
+    }
+
+    /** انتخاب واحد در فرم دوره فقط برای مدیر سیستم؛ بقیه با واحد خودشان ثبت می‌کنند */
+    public static function canChooseUnit()
+    {
+        return self::isAdmin();
     }
 
     /** کارگزار یا کارشناس واحد نباید تخفیف شهریه ثبت کند (بند ۵.۲ صورتجلسه) */

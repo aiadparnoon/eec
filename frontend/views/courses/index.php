@@ -11,6 +11,8 @@
  * @var $registrants array
  * @var $stats array
  * @var $units array
+ * @var $createUnits array واحدهای قابل انتخاب در فرم ثبت
+ * @var $servers array سرورهای فعال کلاس آنلاین
  * @var $brokers array
  * @var $filterTeachers array
  * @var $capacityTypes array
@@ -274,4 +276,4 @@ CSS
     </div>
 </div>
 
-<?php if ($canCreate) echo $this->render('_create-modal', ['units' => $units, 'capacityTypes' => $capacityTypes]); ?>
+<?php if ($canCreate) echo $this->render('_create-modal', ['units' => $createUnits, 'servers' => $servers, 'capacityTypes' => $capacityTypes]); ?>

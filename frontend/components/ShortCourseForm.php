@@ -4,6 +4,7 @@ namespace app\components;
 
 use Yii;
 use app\models\Brokers;
+use app\models\ClassroomServers;
 use app\models\Courses;
 use app\models\Lessons;
 use app\models\Teachers;
@@ -45,8 +46,14 @@ class ShortCourseForm
         };
         $isAdmin = CourseAccess::isAdmin();
 
-        // واحد: ثبت فقط در واحد مجاز؛ در ویرایش، غیرمدیر واحد را تغییر نمی‌دهد
+        // واحد: فقط مدیر سیستم انتخاب می‌کند؛ کارشناس واحد/کارگزار با واحد خودش ثبت می‌کند
+        // (اگر بیش از یک واحد داشته باشد، فقط یکی از واحدهای خودش). در ویرایش، غیرمدیر واحد را تغییر نمی‌دهد.
         $unit = isset($input['college']) && is_string($input['college']) ? $input['college'] : '';
+        if ($isNew && !$isAdmin) {
+            $own = CourseAccess::ownUnits();
+            if (count($own) === 1)
+                $unit = $own[0];
+        }
         if ($isNew || $isAdmin) {
             if (!CourseAccess::canUseUnit($unit))
                 return self::fail('واحد انتخاب‌شده معتبر نیست یا به آن دسترسی ندارید');
@@ -118,6 +125,28 @@ class ShortCourseForm
             return false;
         if (!self::applyLesson($model, $input, $unit, $isNew))
             return false;
+        if (!self::applyServer($model, $input))
+            return false;
+        return true;
+    }
+
+    /**
+     * سرور برگزاری کلاس: یکی از سرورهای فعال (تنظیمات سایت › سرورها) یا «هیچ‌کدام».
+     * سروری که قبلاً روی دوره بوده، حتی اگر بعداً غیرفعال شده باشد، حفظ می‌شود.
+     */
+    private static function applyServer(Courses $model, $input)
+    {
+        $value = isset($input['classroom_server']) && is_string($input['classroom_server']) ? $input['classroom_server'] : '';
+        if ($value === ClassroomServers::NONE) {
+            $model->classroom_server = ClassroomServers::NONE;
+            return true;
+        }
+        if ($value !== '' && $value === (string) $model->getOldAttribute('classroom_server'))
+            return true;
+        $server = ClassroomServers::findById($value);
+        if ($server === null || !$server->active)
+            return self::fail('سرور برگزاری کلاس را انتخاب کنید (یا «هیچ‌کدام» اگر کلاس در سامانه‌ی دیگری برگزار می‌شود)');
+        $model->classroom_server = (string) $server->_id;
         return true;
     }
 
@@ -175,10 +204,13 @@ class ShortCourseForm
         $to = $canChangeDates ? self::jalaliDate(isset($date['to']) ? $date['to'] : '') : (isset($oldDate['to']) ? (string) $oldDate['to'] : '');
         $time = isset($date['time']) && is_scalar($date['time']) ? trim((string) $date['time']) : '';
         if ($canChangeDates) {
-            if ($from === null || $to === null)
-                return self::fail('تاریخ شروع و پایان دوره را وارد کنید');
-            if (strcmp($to, $from) <= 0)
-                return self::fail('تاریخ پایان دوره باید بعد از تاریخ شروع باشد');
+            $fromTs = $from === null ? null : self::toTimestamp($from);
+            $toTs = $to === null ? null : self::toTimestamp($to);
+            if ($fromTs === null || $toTs === null)
+                return self::fail('تاریخ شروع و پایان دوره را درست وارد کنید');
+            // تاریخ پایان حداقل یک روز بعد از تاریخ شروع
+            if (strcmp($to, $from) <= 0 || $toTs - $fromTs < 86400 - 3600)
+                return self::fail('تاریخ پایان دوره باید حداقل یک روز بعد از تاریخ شروع باشد');
         }
         if (!preg_match('/^([01]?\d|2[0-3]):[0-5]\d$/', UsersSearch::normalizeDigits($time)))
             return self::fail('ساعت شروع دوره را به شکل ۱۸:۳۰ وارد کنید');
@@ -219,6 +251,9 @@ class ShortCourseForm
             return null;
         if ((int) $m[2] < 1 || (int) $m[2] > 12 || (int) $m[3] < 1 || (int) $m[3] > 31)
             return null;
+        require_once Yii::getAlias('@frontend') . '/web/jdf.php';
+        if (!jcheckdate((int) $m[2], (int) $m[3], (int) $m[1]))
+            return null; // مثلاً ۳۱ مهر یا ۳۰ اسفند سال غیرکبیسه
         return sprintf('%04d-%02d-%02d', $m[1], $m[2], $m[3]);
     }
 

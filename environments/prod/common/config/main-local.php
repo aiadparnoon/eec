@@ -4,6 +4,8 @@ return [
     'aliases' => [
         '@adobe_password' => '',
         '@payment_api_key' => '',
+        // کلید رمزنگاری تنظیمات محرمانه‌ی دیتابیس (رمز سرورها)؛ خالی = cookieValidationKey
+        '@settings_key' => '',
     ],
     'components' => [
         'db' => [

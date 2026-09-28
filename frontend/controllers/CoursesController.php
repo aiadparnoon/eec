@@ -4,10 +4,10 @@ namespace frontend\controllers;
 
 use Yii;
 use app\models\Brokers;
+use app\models\ClassroomServers;
 use app\models\Colleges;
 use app\models\Courses;
 use app\models\CoursesContents;
-use app\models\CoursesFinancial;
 use app\models\CoursesMembers;
 use app\models\Discounts;
 use app\models\Generals;
@@ -77,7 +77,7 @@ class CoursesController extends Controller
                     [
                         'actions' => ['new', 'edit', 'edit-course', 'copy-course', 'report', 'members_report', 'unit-options',
                             'brokers', 'brokers1', 'broker_contracts', 'capacity', 'course_date', 'check-username',
-                            'show_course_users', 'delete_course', 'toggle-site', 'register-online'],
+                            'show_course_users', 'delete_course', 'toggle-site', 'register-online', 'member-finance'],
                         'allow' => true,
                         'roles' => ['@'],
                         'matchCallback' => function () use ($staff) {
@@ -100,6 +100,7 @@ class CoursesController extends Controller
                     'check-username' => ['post'],
                     'toggle-site' => ['post'],
                     'register-online' => ['post'],
+                    'member-finance' => ['post'],
                 ],
             ],
         ];
@@ -134,6 +135,8 @@ class CoursesController extends Controller
             'registrants' => UsersDirectory::registrants($registrants),
             'stats' => ShortCoursesSearch::stats(),
             'units' => $this->selectableUnits(),
+            'createUnits' => $this->creatableUnits(),
+            'servers' => ClassroomServers::activeOptions(),
             'brokers' => $this->selectableBrokers(),
             'filterTeachers' => $this->selectableTeachers(),
             'capacityTypes' => $this->capacityTypes(),
@@ -246,6 +249,7 @@ class CoursesController extends Controller
             return $this->back('error', 'دوره یافت نشد یا امکان ویرایش آن را ندارید (دوره‌ی تأییدشده را فقط مدیر سیستم ویرایش می‌کند)');
 
         $oldLessonId = isset($model->lessons[0]['_id']) ? (string) $model->lessons[0]['_id'] : '';
+        $oldServer = (string) $model->classroom_server;
         $model->scenario = Courses::SCENARIO_EDIT_COURSE;
         if (!ShortCourseForm::apply($model, $input, false))
             return $this->back('error', ShortCourseForm::$error);
@@ -260,9 +264,20 @@ class CoursesController extends Controller
             return $this->back('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید');
 
         $newLessonId = (string) $model->lessons[0]['_id'];
-        if (ClassroomPlatforms::hasOnlineClass($model) && $newLessonId !== $oldLessonId)
-            ClassroomPlatforms::forCourse($model)->createCourseMeetings((string) $model->_id, $newLessonId);
-        return $this->back('success', 'دوره «' . $model->title['main_fa'] . '» ویرایش شد');
+        $message = 'دوره «' . $model->title['main_fa'] . '» ویرایش شد';
+        if (ClassroomPlatforms::hasOnlineClass($model)) {
+            $result = true;
+            if ($oldServer !== (string) $model->classroom_server)
+                $result = ClassroomPlatforms::forCourse($model)->createCourseMeetings((string) $model->_id); // سرور عوض شد: کلاس روی سرور جدید
+            else if ($newLessonId !== $oldLessonId)
+                $result = ClassroomPlatforms::forCourse($model)->createCourseMeetings((string) $model->_id, $newLessonId);
+            if ($result !== true) {
+                $model->adobe_status = '0';
+                $model->save(false, ['adobe_status']);
+                return $this->back('warning', $message . '؛ اما ساخت کلاس آنلاین روی سرور انتخاب‌شده ناموفق بود و از فهرست قابل ثبت مجدد است');
+            }
+        }
+        return $this->back('success', $message);
     }
 
     public function actionEditCourse($_id)
@@ -276,13 +291,41 @@ class CoursesController extends Controller
         $dataProvider->pagination->pageSize = 50;
         return $this->render('edit-course', [
             'colleges' => $this->selectableUnits(),
+            'servers' => ClassroomServers::activeOptions(),
             'courseDetail' => $courseDetail,
             'searchModel' => $searchModel,
             'dataProvider' => $dataProvider,
             'discounts' => Discounts::find()->where(['course_id' => (string) $courseDetail->_id])->all(),
             'allowEdit' => CourseAccess::canEdit($courseDetail),
-            'courseFinancial' => CoursesFinancial::find()->where(['course_id' => (string) $courseDetail->_id, 'payment_info.status' => '2'])->orderBy(['_id' => SORT_DESC])->all(),
         ]);
+    }
+
+    /**
+     * اطلاعات مالی کامل یک عضو در همین دوره (نوع پرداخت، کانال، سهم واحد و کارگزار، اقساط) — JSON.
+     * همان جدول پروفایل دانشپذیر؛ فقط برای کسی که دوره را مدیریت می‌کند و فقط برای عضوِ همین دوره.
+     */
+    public function actionMemberFinance($_id)
+    {
+        Yii::$app->response->format = Response::FORMAT_JSON;
+        $course = $this->findCourse((string) $_id);
+        if ($course === null || !CourseAccess::canManage($course))
+            return ['title' => 'اطلاعات مالی', 'html' => Html::tag('div', 'دوره یافت نشد یا به آن دسترسی ندارید', ['class' => 'text-danger'])];
+        $memberId = (string) Yii::$app->request->post('member');
+        $member = preg_match('/^[a-f0-9]{24}$/i', $memberId)
+            ? Users::find()->where(['_id' => $memberId, 'courses._id' => (string) $course->_id])->one()
+            : null;
+        if ($member === null)
+            return ['title' => 'اطلاعات مالی', 'html' => Html::tag('div', 'این دانشپذیر عضو دوره نیست', ['class' => 'text-danger'])];
+        $profile = new StudentProfile($member);
+        return [
+            'title' => 'اطلاعات مالی ' . trim($member->first_name . ' ' . $member->last_name),
+            'html' => $this->renderPartial('@frontend/views/users-manage/profile/_finance', [
+                'profile' => $profile,
+                'orders' => $profile->ordersForCourse((string) $course->_id),
+                'installments' => $profile->installmentsForCourse((string) $course->_id),
+                'showCourse' => false,
+            ]),
+        ];
     }
 
     /**
@@ -313,6 +356,7 @@ class CoursesController extends Controller
         $model->mentors = null;
         $model->other_teachers = null;
         $model->adobe_status = null;
+        $model->classroom_meetings = null;
         $model->registrant = (string) Yii::$app->user->identity->username;
         if (!$model->save(false))
             return $this->back('error', 'کپی دوره ناموفق بود');
@@ -661,6 +705,21 @@ class CoursesController extends Controller
             return $titles;
         $result = [];
         foreach (CourseAccess::units() as $id)
+            if (isset($titles[$id]))
+                $result[$id] = $titles[$id];
+        return $result;
+    }
+
+    /**
+     * واحدهای قابل انتخاب در فرم ثبت دوره: مدیر سیستم همه؛ بقیه فقط واحد خودشان.
+     */
+    private function creatableUnits()
+    {
+        $titles = UsersDirectory::collegeTitles();
+        if (CourseAccess::canChooseUnit())
+            return $titles;
+        $result = [];
+        foreach (CourseAccess::ownUnits() as $id)
             if (isset($titles[$id]))
                 $result[$id] = $titles[$id];
         return $result;

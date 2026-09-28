@@ -596,8 +596,10 @@ class ManageCourseContentsController extends Controller
             if ($user->role == 'user')
             {
                 $detail = Admin::find()->where(['username' => $user->username])->one();
-                $username = Yii::getAlias('@adobe_user');
-                $password = Yii::getAlias('@adobe_password');
+                // اطلاعات مدیر ادوبی از تنظیمات سایت › سرورها (دیگر در کد/پیکربندی نیست)
+                $adobeServer = self::adobeServer();
+                $username = $adobeServer !== null ? $adobeServer->setting('username') : Yii::getAlias('@adobe_user');
+                $password = $adobeServer !== null ? $adobeServer->setting('password') : Yii::getAlias('@adobe_password');
             }
             else if ($user->role == 'teacher' || $user->role == 'emp' || $user->role == 'broker')
             {
@@ -616,7 +618,7 @@ class ManageCourseContentsController extends Controller
                     $curl = curl_init();
 
                     curl_setopt_array($curl, array(
-                        CURLOPT_URL => Yii::getAlias('@baseUrl') . '/adobe-connect/login',
+                        CURLOPT_URL => self::adobeApiUrl() . '/adobe-connect/login',
                         CURLOPT_RETURNTRANSFER => true,
                         CURLOPT_ENCODING => '',
                         CURLOPT_MAXREDIRS => 10,
@@ -624,10 +626,7 @@ class ManageCourseContentsController extends Controller
                         CURLOPT_FOLLOWLOCATION => true,
                         CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
                         CURLOPT_CUSTOMREQUEST => 'POST',
-                        CURLOPT_POSTFIELDS => '{
-                            "username" : "' . $username . '",
-                            "password" : "' . $password . '"
-                        }',
+                        CURLOPT_POSTFIELDS => json_encode(['username' => (string) $username, 'password' => (string) $password]),
                         CURLOPT_HTTPHEADER => array(
                             '_id: ' . (string) $adminRole->_id,
                             'Content-Type: application/json'
@@ -638,7 +637,7 @@ class ManageCourseContentsController extends Controller
                     curl_close($curl);
                     if (property_exists($response, 'status')) {
                         if ($response->status == 'ok')
-                            $this->redirect('https://eecvclass1.ut.ac.ir' . Yii::$app->request->get('courseUrl') . '?session=' . $response->data);
+                            return $this->redirectToClass($response->data);
                         else {
                             Yii::$app->session->setFlash('status', '2');
                             return $this->redirect(Yii::$app->request->referrer);
@@ -662,8 +661,10 @@ class ManageCourseContentsController extends Controller
             if ($user->role == 'user')
             {
                 $detail = Admin::find()->where(['username' => $user->username])->one();
-                $username = Yii::getAlias('@adobe_user');
-                $password = Yii::getAlias('@adobe_password');
+                // اطلاعات مدیر ادوبی از تنظیمات سایت › سرورها (دیگر در کد/پیکربندی نیست)
+                $adobeServer = self::adobeServer();
+                $username = $adobeServer !== null ? $adobeServer->setting('username') : Yii::getAlias('@adobe_user');
+                $password = $adobeServer !== null ? $adobeServer->setting('password') : Yii::getAlias('@adobe_password');
             }
             else if ($user->role == 'teacher' || $user->role == 'emp')
             {
@@ -681,7 +682,7 @@ class ManageCourseContentsController extends Controller
                     $curl = curl_init();
 
                     curl_setopt_array($curl, array(
-                        CURLOPT_URL => Yii::getAlias('@baseUrl') . '/adobe-connect/login',
+                        CURLOPT_URL => self::adobeApiUrl() . '/adobe-connect/login',
                         CURLOPT_RETURNTRANSFER => true,
                         CURLOPT_ENCODING => '',
                         CURLOPT_MAXREDIRS => 10,
@@ -689,10 +690,7 @@ class ManageCourseContentsController extends Controller
                         CURLOPT_FOLLOWLOCATION => true,
                         CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
                         CURLOPT_CUSTOMREQUEST => 'POST',
-                        CURLOPT_POSTFIELDS => '{
-                            "username" : "' . $username . '",
-                            "password" : "' . $password . '"
-                        }',
+                        CURLOPT_POSTFIELDS => json_encode(['username' => (string) $username, 'password' => (string) $password]),
                         CURLOPT_HTTPHEADER => array(
                             '_id: ' . (string) $adminRole->_id,
                             'Content-Type: application/json'
@@ -703,7 +701,7 @@ class ManageCourseContentsController extends Controller
                     curl_close($curl);
                     if (property_exists($response, 'status')) {
                         if ($response->status == 'ok')
-                            $this->redirect('https://eecvclass1.ut.ac.ir' . Yii::$app->request->get('courseUrl') . '?session=' . $response->data);
+                            return $this->redirectToClass($response->data);
                         else {
                             Yii::$app->session->setFlash('status', '2');
                             return $this->redirect(Yii::$app->request->referrer);
@@ -719,6 +717,44 @@ class ManageCourseContentsController extends Controller
         else
             Yii::$app->getResponse()->redirect(['dashboard']);
     }
+    /**
+     * سرور ادوبی کانکت برای ورود به کلاس/آرشیو (سرور پیش‌فرض از نوع ادوبی).
+     *
+     * @return \app\models\ClassroomServers|null
+     */
+    private static function adobeServer()
+    {
+        $server = \app\models\ClassroomServers::defaultServer();
+        if ($server === null || $server->type !== \app\models\ClassroomServers::TYPE_ADOBE)
+            $server = \app\models\ClassroomServers::find()->where(['type' => \app\models\ClassroomServers::TYPE_ADOBE, 'active' => true])->one();
+        return $server;
+    }
+
+    private static function adobeApiUrl()
+    {
+        $server = self::adobeServer();
+        $url = $server !== null ? rtrim($server->setting('api_url'), '/') : '';
+        return $url !== '' ? $url : Yii::getAlias('@baseUrl');
+    }
+
+    /**
+     * امنیتی: courseUrl از آدرس صفحه می‌آید و به انتهای دامنه‌ی ادوبی چسبانده می‌شد؛ مقداری مثل
+     * «@evil.com/» کاربر را همراه session ادوبی به سایت دیگری می‌برد. فقط مسیر نسبی ساده پذیرفته می‌شود.
+     */
+    private function redirectToClass($session)
+    {
+        $path = (string) Yii::$app->request->get('courseUrl', '');
+        $server = self::adobeServer();
+        $host = $server !== null ? rtrim($server->setting('url'), '/') : '';
+        if ($host === '')
+            $host = 'https://eecvclass1.ut.ac.ir';
+        if (!preg_match('~^/[A-Za-z0-9_\-/]*$~', $path) || strpos($path, '//') !== false) {
+            Yii::$app->session->setFlash('status', '2');
+            return $this->redirect(\app\components\SafeRedirect::referrer(['index']));
+        }
+        return $this->redirect($host . $path . '?session=' . rawurlencode((string) $session));
+    }
+
     public function lesson_detail($_id)
     {
         return Lessons::findOne($_id);

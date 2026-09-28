@@ -39,6 +39,14 @@ if (is_array($flash) && isset($flash['message'])) {
     $this->registerJs("toastr['$flashType'](" . \yii\helpers\Json::htmlEncode($flash['message']) . ", '', {positionClass: 'toast-top-center', closeButton: true, timeOut: 7000, escapeHtml: true});");
 }
 
+if (in_array((string) Yii::$app->session->get('status'), ['34', '111'], true)) {
+    $legacyMessage = Yii::$app->session->get('status') === '34'
+        ? ['error', (string) Yii::$app->session->getFlash('discountError', 'اطلاعات کد تخفیف معتبر نیست')]
+        : ['info', 'درخواست انصراف ثبت شد (یا از قبل ثبت شده بود) و پس از تأیید مدیر سیستم اعمال می‌شود'];
+    $this->registerJs("toastr['" . $legacyMessage[0] . "'](" . \yii\helpers\Json::htmlEncode($legacyMessage[1]) . ", '', {positionClass: 'toast-top-center', closeButton: true, timeOut: 8000, escapeHtml: true});");
+    Yii::$app->session->remove('status');
+}
+
 if (Yii::$app->session->has('status')) {
     if (Yii::$app->session->get('status') == '1')
         $script = <<< JS
@@ -286,6 +294,32 @@ $tab = <<< JS
     });
 JS;
 $this->registerJs($tab);
+// تاریخ اتمام حداقل یک روز بعد از تاریخ شروع (سمت سرور هم بررسی می‌شود)
+$this->registerJs(<<<JS
+(function () {
+    var start = document.getElementById('start-date'), end = document.getElementById('end-date');
+    if (!start || !end) return;
+    function apply() {
+        var s = start._flatpickr, e = end._flatpickr;
+        if (!s || !e || !s.selectedDates[0]) return;
+        var min = new Date(s.selectedDates[0].getTime() + 86400000);
+        e.set('minDate', min);
+        if (e.selectedDates[0] && e.selectedDates[0] < min) e.clear();
+    }
+    setTimeout(function () {
+        apply();
+        if (start._flatpickr) start._flatpickr.config.onChange.push(apply);
+    }, 300);
+    $(start).closest('form').on('submit', function (ev) {
+        var s = start._flatpickr, e = end._flatpickr;
+        if (s && e && s.selectedDates[0] && e.selectedDates[0] && e.selectedDates[0] - s.selectedDates[0] < 86400000 - 3600000) {
+            ev.preventDefault();
+            toastr.error('تاریخ اتمام دوره باید حداقل یک روز بعد از تاریخ شروع باشد', '', {positionClass: 'toast-top-center'});
+        }
+    });
+})();
+JS
+);
 $url = Yii::$app->urlManager->createAbsoluteUrl('packages/show_user_detail','https');
 $_csrf = Yii::$app->request->getCsrfToken();
 $list = <<<JS
@@ -376,28 +410,22 @@ $(document).on('click','.show-course-scores',function(e) {
 JS;
 $this->registerJs($show_off);
 
-$url = Yii::$app->urlManager->createAbsoluteUrl('packages/show_finance_info', 'https');
-$_csrf = Yii::$app->request->getCsrfToken();
-$show_finance = <<<JS
-$(document).on('click','.show-finance-info',function(e) {
+$financeUrl = \yii\helpers\Json::htmlEncode(Url::to(['member-finance', '_id' => (string) $courseDetail->_id]));
+$this->registerJs(<<<JS
+$(document).on('click', '.show-finance-info', function (e) {
     e.preventDefault();
-    var id = (this).id;
-     $('.title').html("در حال دریافت...");
-    $.ajax({
-        url:'$url',
-        type : 'POST',
-        data : {id:id, _csrf: yii.getCsrfToken() },
-        success:function(data) {
-            console.log(JSON.parse(data));
-            var main_data=JSON.parse(data);
-            $('.finance_title').html(main_data.title);
-            $('#finance_body').html(main_data.body);
-        }
-        })
-}
-)
-JS;
-$this->registerJs($show_finance);
+    $('.finance_title').text('در حال دریافت...');
+    $('#finance_body').html('<div class="text-center py-4"><span class="spinner-border text-primary"></span></div>');
+    $.post($financeUrl, {member: $(this).data('member'), _csrf: yii.getCsrfToken()}).done(function (res) {
+        $('.finance_title').text(res.title || 'اطلاعات مالی');
+        $('#finance_body').html(res.html || '');
+    }).fail(function () {
+        $('.finance_title').text('اطلاعات مالی');
+        $('#finance_body').text('دریافت اطلاعات ممکن نشد');
+    });
+});
+JS
+);
 
 ?>
 
@@ -1052,11 +1080,6 @@ $this->registerJs($digit);
                         اعضا
                     </button>
                 </li>
-                <li class="nav-item course-tab" role="presentation" id="tab-id3">
-                    <button type="button" class="nav-link" role="tab" data-bs-toggle="tab" data-bs-target="#id3" aria-controls="id3" aria-selected="true">
-                        مالی
-                    </button>
-                </li>
             </ul>
             <?php
             if (Yii::$app->user->identity->role == 'user')
@@ -1501,6 +1524,11 @@ $this->registerJs($digit);
                         <div class="col-4 col-md-4 col-sm-12 dol-lg-4 col-xl-4 mb-3">
                             <label for="select2Basic" class="form-label">واحد *</label>
                             <?php
+                            // انتخاب واحد فقط با مدیر سیستم؛ کارشناس واحد و کارگزار واحد خودشان را می‌بینند
+                            if (!CourseAccess::canChooseUnit() || !$allowEdit)
+                                echo '<input type="text" class="form-control" disabled value="' . Html::encode(\app\components\UsersDirectory::collegeTitles()[(string) $courseDetail->college] ?? '-') . '">'
+                                    . Html::hiddenInput('Courses[college]', (string) $courseDetail->college);
+                            else
                             echo $form->field($courseDetail, 'college')->dropDownList(
                                 $colleges,
                                 [
@@ -1643,6 +1671,28 @@ $this->registerJs($digit);
                             </div>
                         </div>
                         <div class="col-3 col-md-3 col-sm-12 dol-lg-3 col-xl-3 mb-3">
+                            <label class="form-label" for="edit-server">سرور برگزاری کلاس *</label>
+                            <?php
+                            // دوره‌های قدیمی بدون فیلد: سرور پیش‌فرض اگر کلاس آنلاین دارد، وگرنه «هیچ‌کدام»
+                            $currentServer = (string) $courseDetail->classroom_server;
+                            if ($currentServer === '') {
+                                $effective = \app\components\classroom\ClassroomPlatforms::hasOnlineClass($courseDetail) ? \app\components\classroom\ClassroomPlatforms::serverFor($courseDetail) : null;
+                                $currentServer = $effective !== null ? (string) $effective->_id : \app\models\ClassroomServers::NONE;
+                            }
+                            $serverOptions = $servers;
+                            if ($currentServer !== \app\models\ClassroomServers::NONE && !isset($serverOptions[$currentServer])) {
+                                $inactive = \app\models\ClassroomServers::findById($currentServer);
+                                if ($inactive !== null)
+                                    $serverOptions[$currentServer] = $inactive->title . ' (غیرفعال)';
+                            }
+                            $serverOptions[\app\models\ClassroomServers::NONE] = 'هیچ‌کدام (برگزاری در سامانه‌ی دیگر / بدون کلاس آنلاین)';
+                            if ($allowEdit)
+                                echo Html::dropDownList('Courses[classroom_server]', $currentServer, $serverOptions, ['id' => 'edit-server', 'class' => 'form-select', 'required' => true, 'prompt' => 'انتخاب سرور']);
+                            else
+                                echo '<input type="text" class="form-control" disabled value="' . Html::encode($serverOptions[$currentServer] ?? '-') . '">';
+                            ?>
+                        </div>
+                        <div class="col-3 col-md-3 col-sm-12 dol-lg-3 col-xl-3 mb-3">
                             <label for="nameWithTitle" class="form-label">مخفی کردن آرشیو *</label>
                             <div id="lessons">
                                 <?php
@@ -1714,7 +1764,7 @@ $this->registerJs($digit);
                     ?>
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <h4 class="card-title mb-0">کدهای تخفیف ثبت شده</h4>
-                        <?php if (CourseAccess::canSetDiscount()): ?>
+                        <?php if (CourseAccess::canManage($courseDetail)): ?>
                         <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#add_discount_code">
                             افزودن کد تخفیف
                         </button>
@@ -1740,7 +1790,7 @@ $this->registerJs($digit);
                                         <a class="nav-item nav-link active" href="javascript:void(0)">تعداد استفاده شده: <?= $used ?></a>
                                     </div>
                                     <?php
-                                    if($discount->used == null && CourseAccess::canSetDiscount())
+                                    if($discount->used == null && CourseAccess::canManage($courseDetail))
                                     {
                                         ?>
                                         <ul class="navbar-nav ms-lg-auto">
@@ -1799,7 +1849,7 @@ $this->registerJs($digit);
                 {
                     ?>
                     <div class="alert alert-warning text-dark" role="alert">برای این دوره تا کنون کد تخفیفی ثبت نشده است</div>
-                    <?php if (CourseAccess::canSetDiscount()): ?>
+                    <?php if (CourseAccess::canManage($courseDetail)): ?>
                     <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#add_discount_code">
                         افزودن کد تخفیف
                     </button>
@@ -1828,6 +1878,14 @@ $this->registerJs($digit);
                                         'value' => (string) $courseDetail->_id,
                                     ]
                                 )->label(false); ?>
+                                <?php
+                                $maxDiscount = Discounts::maxAmount($courseDetail);
+                                $brokerShare = Discounts::brokerShare($courseDetail);
+                                if ($brokerShare === null)
+                                    echo '<div class="alert alert-warning">این دوره کارگزار یا قرارداد با سهم مشخص ندارد. تخفیف از سهم کارگزار داده می‌شود، پس برای این دوره کد تخفیف ثبت نمی‌شود.</div>';
+                                else
+                                    echo '<div class="alert alert-info mb-3">سهم کارگزار از هر ثبت‌نام: <b>' . number_format($brokerShare) . '</b> تومان. تخفیف از سهم کارگزار کم می‌شود و باید حداقل ' . number_format(Discounts::MIN_MARGIN_BELOW_BROKER_SHARE) . ' تومان از آن کمتر باشد؛ <b>حداکثر مبلغ مجاز: ' . number_format($maxDiscount) . ' تومان</b>.</div>';
+                                ?>
                                 <div class="row">
                                     <div class="col-6 col-md-6 col-lg-6 col-sm-12 mb-3">
                                         <label for="nameWithTitle" class="form-label">مبلغ کد تخفیف (تومان) * </label>
@@ -1835,7 +1893,11 @@ $this->registerJs($digit);
                                             [
                                                 'class' => 'form-control text-start only-english-digits',
                                                 'required' => true,
-                                                'oninvalid' => 'this.setCustomValidity(\'لطفا مبلغ را صحیح وارد کنید\')',
+                                                'type' => 'number',
+                                                'min' => 1,
+                                                'max' => $maxDiscount === null ? 0 : (int) floor($maxDiscount),
+                                                'disabled' => $maxDiscount === null || $maxDiscount < 1,
+                                                'oninvalid' => 'this.setCustomValidity(\'مبلغ باید بین ۱ و حداکثر مبلغ مجاز باشد\')',
                                                 'oninput' => 'setCustomValidity(\'\')',
 //                                                'onkeypress' => 'return (event.charCode >= 48 && event.charCode <= 57) || (event.charCode == 46)'
                                             ]
@@ -1970,7 +2032,17 @@ $this->registerJs($digit);
                                             <i class="bx bx-dots-vertical-rounded"></i>
                                         </button>
                                         <div class="dropdown-menu dropdown-menu-end" aria-labelledby="analyticsOptions">
-                                            <a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#<?= $deleteFromClass ?>">حذف از دوره</a>
+                                            <a class="dropdown-item" href="<?= Url::to(['users-manage/profile', 'id' => (string) $member->_id]) ?>" target="_blank" rel="noopener"><i class="bx bx-user me-1"></i>پروفایل دانشپذیر</a>
+                                            <?php
+                                            // مدیر سیستم مستقیم حذف می‌کند؛ کارشناس واحد و کارگزار درخواست انصراف ثبت می‌کنند (تأیید در «درخواست انصراف»)
+                                            $pendingCancel = is_array($memberCourse) && !empty($memberCourse['begin_deleted']);
+                                            if (CourseAccess::isAdmin())
+                                                echo '<a class="dropdown-item text-danger" href="#" data-bs-toggle="modal" data-bs-target="#' . $deleteFromClass . '"><i class="bx bx-trash me-1"></i>حذف از دوره</a>';
+                                            else if ($pendingCancel)
+                                                echo '<span class="dropdown-item disabled"><i class="bx bx-time me-1"></i>درخواست انصراف در انتظار تأیید</span>';
+                                            else if (CourseAccess::canManage($courseDetail))
+                                                echo '<a class="dropdown-item text-danger" href="#" data-bs-toggle="modal" data-bs-target="#' . $deleteFromClass . '"><i class="bx bx-log-out me-1"></i>ثبت درخواست انصراف</a>';
+                                            ?>
                                             <?php
                                             if ($memberCourse['status'] == '0')
                                             {
@@ -1994,7 +2066,7 @@ $this->registerJs($digit);
                                                 <?php
                                             }
                                             ?>
-                                            <a class="dropdown-item show-finance-info" href="#" data-bs-toggle="modal" data-bs-target="#show-finance-info" id="<?php echo (string) $courseDetail->_id . '-' . (string) $member->username; ?>">اطلاعات مالی</a>
+                                            <a class="dropdown-item show-finance-info" href="#" data-bs-toggle="modal" data-bs-target="#show-finance-info" data-member="<?= (string) $member->_id ?>"><i class="bx bx-wallet me-1"></i>اطلاعات مالی</a>
                                         </div>
                                     </td>
                                     <div class="modal fade" id="<?= $changeStatus ?>" tabindex="-1" style="display: none;" aria-hidden="true">
@@ -2033,7 +2105,7 @@ $this->registerJs($digit);
                                         <div class="modal-dialog modal-dialog-centered" role="document">
                                             <div class="modal-content">
                                                 <div class="modal-header">
-                                                    <h5 class="modal-title secondary-font" id="modalCenterTitle">حذف از دوره <?= Html::encode($member->first_name . ' ' . $member->last_name) ?></h5>
+                                                    <h5 class="modal-title secondary-font" id="modalCenterTitle"><?= CourseAccess::isAdmin() ? 'حذف از دوره' : 'درخواست انصراف' ?> <?= Html::encode($member->first_name . ' ' . $member->last_name) ?></h5>
                                                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                                                 </div>
                                                 <div class="modal-body">
@@ -2049,7 +2121,11 @@ $this->registerJs($digit);
                                                     ); ?>
                                                     <?= $form->field($member, '_id')->hiddenInput()->label(false); ?>
                                                     <input type="hidden" name="courseId" value="<?= (string) $courseDetail->_id ?>">
-                                                    <p>آیا از حذف <?= Html::encode($member->first_name . ' ' . $member->last_name) ?> از این دوره مطمئن هستید؟ </p>
+                                                    <?php if (CourseAccess::isAdmin()): ?>
+                                                        <p>آیا از حذف <?= Html::encode($member->first_name . ' ' . $member->last_name) ?> از این دوره مطمئن هستید؟ سهم واحد به کیف پول کارگزار برمی‌گردد.</p>
+                                                    <?php else: ?>
+                                                        <p>درخواست انصراف <?= Html::encode($member->first_name . ' ' . $member->last_name) ?> از این دوره ثبت شود؟ دانشپذیر پس از تأیید مدیر سیستم (بخش «درخواست انصراف») از دوره حذف می‌شود.</p>
+                                                    <?php endif; ?>
                                                 </div>
                                                 <div class="modal-footer">
                                                     <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">
@@ -2128,174 +2204,6 @@ $this->registerJs($digit);
                             ]);
                             ?>
                         </nav>
-                    </div>
-                </div>
-            </div>
-            <div class="tab-pane fade" id="id3" role="tabpanel">
-                <?php
-                if ($courseFinancial != null)
-                {
-                    ?>
-                    <div class="card-header d-flex justify-content-between align-items-center">
-                        <h4 class="card-title mb-0">صورت های مالی ثبت شده</h4>
-                        <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#add_financial">
-                            افزودن صورت مالی
-                        </button>
-                    </div>
-                    <div class="table-responsive text-nowrap">
-                        <table class="table">
-                            <thead>
-                            <tr>
-                                <th>ردیف</th>
-                                <th>مبلغ</th>
-                                <th>فایل</th>
-                                <th>جزئیات</th>
-                            </tr>
-                            </thead>
-                            <tbody class="table-border-bottom-0">
-                            <?php
-                            $i = 1;
-                            foreach ($courseFinancial as $value)
-                            {
-                                $viewCourseFinancial = 'viewCourseFinancial'.rand();
-                                ?>
-                                <tr>
-                                    <td><?= $i++ ?></td>
-                                    <td><?= number_format($value->amount) ?></td>
-                                    <td><a class="badge bg-label-secondary" href="<?= Yii::$app->urlManager->createUrl(['packages/file','filename' => $value->file])  ?>">دانلود</a></td>
-                                    <td><a class="badge bg-label-info" href="#" data-bs-toggle="modal" data-bs-target="#<?= $viewCourseFinancial ?>">مشاهده جزئیات</a></td>
-                                </tr>
-                                <div class="modal fade" id="<?= $viewCourseFinancial ?>" tabindex="-1" style="display: none;" aria-hidden="true">
-                                    <div class="modal-dialog modal-dialog-centered" role="document">
-                                        <div class="modal-content">
-                                            <div class="modal-header">
-                                                <h5 class="modal-title secondary-font" id="modalCenterTitle">مشاهده اطلاعات پرداخت</h5>
-                                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                                            </div>
-                                            <div class="modal-body">
-                                                <div class="alert alert-success alert-dismissible d-flex align-items-center" role="alert">
-                                                    <svg class="me-2" width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                                        <g opacity="0.5">
-                                                            <path d="M21.9995 12.8175L21.591 12.409C20.7123 11.5303 19.2877 11.5303 18.409 12.409L17.6076 13.2104C17.2878 12.3573 16.4648 11.75 15.5 11.75C14.2574 11.75 13.25 12.7574 13.25 14V15.7638C12.7601 15.8183 12.2847 16.0334 11.909 16.409C11.0303 17.2877 11.0303 18.7123 11.909 19.591L12.318 20H10C6.22876 20 4.34315 20 3.17157 18.8284C2 17.6569 2 15.7712 2 12C2 11.5581 2.00188 10.392 2.00377 10H22C22.0019 10.392 22 11.5581 22 12C22 12.283 22 12.5553 21.9995 12.8175Z" fill="#1C274C"/>
-                                                        </g>
-                                                        <path d="M5.25 16C5.25 15.5858 5.58579 15.25 6 15.25H10C10.4142 15.25 10.75 15.5858 10.75 16C10.75 16.4142 10.4142 16.75 10 16.75H6C5.58579 16.75 5.25 16.4142 5.25 16Z" fill="#1C274C"/>
-                                                        <path d="M9.99484 4H14.0052C17.7861 4 19.6766 4 20.8512 5.11578C21.6969 5.91916 21.9337 7.07507 22 9V10H2V9C2.0663 7.07507 2.3031 5.91916 3.14881 5.11578C4.3234 4 6.21388 4 9.99484 4Z" fill="#1C274C"/>
-                                                        <path d="M19.4697 13.4697C19.7626 13.1768 20.2374 13.1768 20.5303 13.4697L22.5303 15.4697C22.8232 15.7626 22.8232 16.2374 22.5303 16.5303C22.2374 16.8232 21.7626 16.8232 21.4697 16.5303L20.75 15.8107V20C20.75 20.4142 20.4142 20.75 20 20.75C19.5858 20.75 19.25 20.4142 19.25 20V15.8107L18.5303 16.5303C18.2374 16.8232 17.7626 16.8232 17.4697 16.5303C17.1768 16.2374 17.1768 15.7626 17.4697 15.4697L19.4697 13.4697Z" fill="#1C274C"/>
-                                                        <path fill-rule="evenodd" clip-rule="evenodd" d="M15.5 13.25C15.9142 13.25 16.25 13.5858 16.25 14V18.1893L16.9697 17.4697C17.2626 17.1768 17.7374 17.1768 18.0303 17.4697C18.3232 17.7626 18.3232 18.2374 18.0303 18.5303L16.0303 20.5303C15.7374 20.8232 15.2626 20.8232 14.9697 20.5303L12.9697 18.5303C12.6768 18.2374 12.6768 17.7626 12.9697 17.4697C13.2626 17.1768 13.7374 17.1768 14.0303 17.4697L14.75 18.1893V14C14.75 13.5858 15.0858 13.25 15.5 13.25Z" fill="#1C274C"/>
-                                                    </svg>
-                                                    مبلغ پرداخت شده: <?= number_format($value->amount) ?> تومان
-                                                </div>
-                                                <div class="alert alert-success alert-dismissible d-flex align-items-center" role="alert">
-                                                    <svg class="me-2" width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                                        <path d="M6.94028 2C7.35614 2 7.69326 2.32421 7.69326 2.72414V4.18487C8.36117 4.17241 9.10983 4.17241 9.95219 4.17241H13.9681C14.8104 4.17241 15.5591 4.17241 16.227 4.18487V2.72414C16.227 2.32421 16.5641 2 16.98 2C17.3958 2 17.733 2.32421 17.733 2.72414V4.24894C19.178 4.36022 20.1267 4.63333 20.8236 5.30359C21.5206 5.97385 21.8046 6.88616 21.9203 8.27586L22 9H2.92456H2V8.27586C2.11571 6.88616 2.3997 5.97385 3.09665 5.30359C3.79361 4.63333 4.74226 4.36022 6.1873 4.24894V2.72414C6.1873 2.32421 6.52442 2 6.94028 2Z" fill="#1C274C"/>
-                                                        <path opacity="0.5" d="M21.9995 14.0001V12.0001C21.9995 11.161 21.9963 9.66527 21.9834 9H2.00917C1.99626 9.66527 1.99953 11.161 1.99953 12.0001V14.0001C1.99953 17.7713 1.99953 19.6569 3.1711 20.8285C4.34267 22.0001 6.22829 22.0001 9.99953 22.0001H13.9995C17.7708 22.0001 19.6564 22.0001 20.828 20.8285C21.9995 19.6569 21.9995 17.7713 21.9995 14.0001Z" fill="#1C274C"/>
-                                                        <path d="M18 17C18 17.5523 17.5523 18 17 18C16.4477 18 16 17.5523 16 17C16 16.4477 16.4477 16 17 16C17.5523 16 18 16.4477 18 17Z" fill="#1C274C"/>
-                                                        <path d="M18 13C18 13.5523 17.5523 14 17 14C16.4477 14 16 13.5523 16 13C16 12.4477 16.4477 12 17 12C17.5523 12 18 12.4477 18 13Z" fill="#1C274C"/>
-                                                        <path d="M13 17C13 17.5523 12.5523 18 12 18C11.4477 18 11 17.5523 11 17C11 16.4477 11.4477 16 12 16C12.5523 16 13 16.4477 13 17Z" fill="#1C274C"/>
-                                                        <path d="M13 13C13 13.5523 12.5523 14 12 14C11.4477 14 11 13.5523 11 13C11 12.4477 11.4477 12 12 12C12.5523 12 13 12.4477 13 13Z" fill="#1C274C"/>
-                                                        <path d="M8 17C8 17.5523 7.55228 18 7 18C6.44772 18 6 17.5523 6 17C6 16.4477 6.44772 16 7 16C7.55228 16 8 16.4477 8 17Z" fill="#1C274C"/>
-                                                        <path d="M8 13C8 13.5523 7.55228 14 7 14C6.44772 14 6 13.5523 6 13C6 12.4477 6.44772 12 7 12C7.55228 12 8 12.4477 8 13Z" fill="#1C274C"/>
-                                                    </svg>
-                                                    تاریخ پرداخت: <?= Html::encode($value->payment_info['date'] ?? '') ?>
-                                                </div>
-                                                <div class="alert alert-success alert-dismissible d-flex align-items-center" role="alert">
-                                                    <svg class="me-2" width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                                                        <path opacity="0.5" d="M3.46447 3.46447C2 4.92893 2 7.28595 2 12C2 16.714 2 19.0711 3.46447 20.5355C4.92893 22 7.28595 22 12 22C16.714 22 19.0711 22 20.5355 20.5355C22 19.0711 22 16.714 22 12C22 7.28595 22 4.92893 20.5355 3.46447C19.0711 2 16.714 2 12 2C7.28595 2 4.92893 2 3.46447 3.46447Z" fill="#1C274C"/>
-                                                        <path d="M10.004 5.75194C10.4182 5.74975 10.7522 5.41219 10.75 4.99798C10.7478 4.58377 10.4102 4.24977 9.99602 4.25196C8.91427 4.2577 8.01583 4.2824 7.28261 4.41067C6.53075 4.5422 5.88786 4.79268 5.36144 5.29403C4.90634 5.72746 4.60191 6.16641 4.43626 6.797C4.28612 7.36858 4.25937 8.07179 4.25231 8.9945C4.24914 9.40871 4.58234 9.74705 4.99654 9.75022C5.41074 9.75339 5.74909 9.42019 5.75226 9.00599C5.75952 8.05721 5.79204 7.53976 5.88704 7.1781C5.96654 6.87546 6.09314 6.6686 6.39592 6.38024C6.63788 6.1498 6.96814 5.98846 7.54109 5.88823C8.13268 5.78473 8.91071 5.75774 10.004 5.75194Z" fill="#1C274C"/>
-                                                        <path d="M14.0041 4.25196C13.5899 4.24977 13.2523 4.58377 13.2501 4.99798C13.2479 5.41218 13.5819 5.74975 13.9961 5.75194C15.0894 5.75774 15.8674 5.78474 16.4589 5.88823C17.0319 5.98846 17.3621 6.1498 17.6041 6.38024C17.9069 6.6686 18.0335 6.87546 18.113 7.1781C18.208 7.53976 18.2405 8.05721 18.2477 9.00599C18.2509 9.42019 18.5893 9.75339 19.0035 9.75022C19.4177 9.74705 19.7509 9.40871 19.7477 8.9945C19.7406 8.07179 19.7139 7.36858 19.5637 6.797C19.3981 6.16641 19.0937 5.72746 18.6386 5.29403C18.1121 4.79269 17.4693 4.5422 16.7174 4.41067C15.9842 4.2824 15.0858 4.2577 14.0041 4.25196Z" fill="#1C274C"/>
-                                                        <path d="M5 11.2503C4.58579 11.2503 4.25 11.5861 4.25 12.0003C4.25 12.4145 4.58579 12.7503 5 12.7503H19C19.4142 12.7503 19.75 12.4145 19.75 12.0003C19.75 11.5861 19.4142 11.2503 19 11.2503H5Z" fill="#1C274C"/>
-                                                        <path d="M5.75226 14.9946C5.74909 14.5804 5.41074 14.2472 4.99654 14.2504C4.58234 14.2535 4.24914 14.5919 4.25231 15.0061C4.25937 15.9288 4.28612 16.632 4.43626 17.2036C4.60191 17.8342 4.90634 18.2731 5.36144 18.7066C5.88785 19.2079 6.53073 19.4584 7.28258 19.5899C8.01578 19.7182 8.91421 19.7429 9.99593 19.7486C10.4101 19.7508 10.7477 19.4168 10.7499 19.0026C10.7521 18.5884 10.4181 18.2508 10.0039 18.2487C8.91065 18.2429 8.13264 18.2159 7.54107 18.1124C6.96814 18.0121 6.63788 17.8508 6.39592 17.6204C6.09314 17.332 5.96654 17.1251 5.88704 16.8225C5.79204 16.4608 5.75952 15.9434 5.75226 14.9946Z" fill="#1C274C"/>
-                                                        <path d="M19.7477 15.0061C19.7509 14.5919 19.4177 14.2535 19.0035 14.2504C18.5893 14.2472 18.2509 14.5804 18.2477 14.9946C18.2405 15.9434 18.208 16.4608 18.113 16.8225C18.0335 17.1251 17.9069 17.332 17.6041 17.6204C17.3621 17.8508 17.0319 18.0121 16.4589 18.1124C15.8674 18.2159 15.0894 18.2429 13.9961 18.2487C13.5819 18.2508 13.2479 18.5884 13.2501 19.0026C13.2523 19.4168 13.5899 19.7508 14.0041 19.7486C15.0858 19.7429 15.9842 19.7182 16.7174 19.5899C17.4693 19.4584 18.1121 19.2079 18.6386 18.7066C19.0937 18.2731 19.3981 17.8342 19.5637 17.2036C19.7139 16.632 19.7406 15.9288 19.7477 15.0061Z" fill="#1C274C"/>
-                                                    </svg>
-                                                    شماره سفارش: <?= $value->payment_info['order_id'] ?>
-                                                </div>
-                                            </div>
-                                            <div class="modal-footer">
-                                                <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">
-                                                    بستن
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                <?php
-                            }
-                            ?>
-                            </tbody>
-                        </table>
-                    </div>
-                    <?php
-                }
-                else
-                {
-                    ?>
-                    <div class="alert alert-warning text-dark" role="alert">برای این دوره تا کنون هیچ صورت مالی ثبت نشده است</div>
-                    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#add_financial">
-                        افزودن صورت مالی
-                    </button>
-                    <?php
-                }
-                ?>
-                <div class="modal fade" id="add_financial" tabindex="-1" style="display: none;" aria-hidden="true">
-                    <div class="modal-dialog modal-dialog-centered" role="document">
-                        <div class="modal-content">
-                            <div class="modal-header">
-                                <h5 class="modal-title secondary-font" id="modalCenterTitle">افزودن صورت مالی</h5>
-                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                            </div>
-                            <div class="modal-body">
-                                <?php
-                                $financialModel = new CoursesFinancial();
-                                $form = ActiveForm::begin(
-                                    [
-                                        'action' => ['packages/courses_financial'],
-                                        "method" => "post",
-                                    ]
-                                ); ?>
-                                <?= $form->field($financialModel, 'course_id')->hiddenInput(
-                                    [
-                                        'value' => (string) $courseDetail->_id,
-                                    ]
-                                )->label(false); ?>
-                                <?= $form->field($financialModel, 'type')->hiddenInput(
-                                    [
-                                        'value' => '2',
-                                    ]
-                                )->label(false); ?>
-                                <div class="row">
-                                    <div class="col-6 col-md-6 col-lg-6 col-sm-12 mb-3">
-                                        <label for="nameWithTitle" class="form-label">مبلغ (تومان) * </label>
-                                        <?= $form->field($financialModel, 'amount')->textInput(
-                                            [
-                                                'class' => 'form-control text-start',
-                                                'required' => true,
-                                                'oninvalid' => 'this.setCustomValidity(\'لطفا مبلغ را صحیح وارد کنید\')',
-                                                'oninput' => 'setCustomValidity(\'\')',
-                                                'onkeypress' => 'return (event.charCode >= 48 && event.charCode <= 57) || (event.charCode == 46)'
-                                            ]
-                                        )->label(false); ?>
-                                    </div>
-                                    <div class="col-6 col-md-6 col-lg-6 col-sm-12 mb-3">
-                                        <label for="nameWithTitle" class="form-label">فایل توضیحات * </label>
-                                        <?= $form->field($financialModel, 'file')->fileInput(
-                                            [
-                                                'class' => 'form-control text-start',
-                                                'required' => true,
-                                                'oninvalid' => 'this.setCustomValidity(\'لطفا فایل توضیحات را انتخاب کنید\')',
-                                                'oninput' => 'setCustomValidity(\'\')',
-                                            ]
-                                        )->label(false); ?>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="modal-footer">
-                                <button type="button" class="btn btn-label-secondary" data-bs-dismiss="modal">
-                                    بستن
-                                </button>
-                                <button type="submit" class="btn btn-primary">پرداخت مبلغ</button>
-                                <?php ActiveForm::end(); ?>
-                            </div>
-                        </div>
                     </div>
                 </div>
             </div>
@@ -2404,7 +2312,7 @@ if (Yii::$app->user->identity->role == 'user' || Yii::$app->user->identity->role
 </div>
 
 <div class="modal fade" id="show-finance-info" tabindex="-1" style="display: none;" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered" role="document">
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable" role="document">
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title secondary-font finance_title" id="modalCenterTitle"></h5>

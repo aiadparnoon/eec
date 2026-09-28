@@ -123,10 +123,15 @@ class PackagesController extends Controller
             return false;
         if (Yii::$app->user->isGuest)
             return true;
-        if (in_array($action->id, ['add_discount', 'delete_discount'], true) && !\app\components\CourseAccess::canSetDiscount()) {
-            Yii::$app->session->setFlash('status', '2');
-            $this->redirect(\app\components\SafeRedirect::referrer(['index']))->send();
-            return false;
+        // کد تخفیف: هر کسی که دوره را مدیریت می‌کند (بررسی canManage پایین‌تر با Discounts[course_id]/Discounts[_id]).
+        // سقف مبلغ (سهم کارگزار منهای ۵۰ هزار تومان) در Discounts::rules() اعمال می‌شود.
+        if (in_array($action->id, ['add_discount', 'delete_discount'], true)) {
+            $post = Yii::$app->request->post('Discounts');
+            if (!is_array($post) || (empty($post['course_id']) && empty($post['_id']))) {
+                Yii::$app->session->setFlash('status', '2');
+                $this->redirect(\app\components\SafeRedirect::referrer(['index']))->send();
+                return false;
+            }
         }
         $request = Yii::$app->request;
         $post = $request->post();
@@ -3284,10 +3289,20 @@ class PackagesController extends Controller
     {
         if(Yii::$app->request->isPost)
         {
-            $user = Users::findOne(Yii::$app->request->post()['Users']['_id']);
-            if($user != null)
+            $userId = isset(Yii::$app->request->post()['Users']['_id']) ? Yii::$app->request->post()['Users']['_id'] : null;
+            $user = is_string($userId) && preg_match('/^[a-f0-9]{24}$/i', $userId) ? Users::findOne($userId) : null;
+            $course = Courses::findOne((string) Yii::$app->request->post('courseId'));
+            if($user != null && $course != null)
             {
-                $course = Courses::findOne(Yii::$app->request->post('courseId'));
+                // کارگزار (و در دوره‌های کوتاه‌مدت، کارشناس واحد هم) مستقیم حذف نمی‌کند: درخواست انصراف
+                // ثبت می‌شود و پس از تأیید مدیر در «درخواست انصراف» اعمال می‌شود. مدیر سیستم مستقیم حذف می‌کند.
+                $role = Yii::$app->user->identity->role;
+                $requestOnly = $role == 'broker' || (!\app\components\CourseAccess::isAdmin() && (string) $course->type === '1');
+                if ($requestOnly && CancelingRequests::find()->where(['username' => $user->username, 'course_id' => (string) $course->_id, 'status' => '0'])->exists())
+                {
+                    Yii::$app->session->setFlash('status', '111');
+                    return $this->redirect(\app\components\SafeRedirect::referrer(['index']));
+                }
                 //Add Cancel Request To Collection
                 $order = Orders::find()->where(['username' => $user->username])->andWhere(['orders._id' => (string) $course->_id])->one();
                 if($order != null)
@@ -3300,11 +3315,11 @@ class PackagesController extends Controller
                                 $broker_id = $course->broker['_id'];
                             else
                                 $broker_id = null;
-                            if(Yii::$app->user->identity->role == 'broker')
+                            if($requestOnly)
                             {
-                                $registrant = $broker_id;
+                                $registrant = $role == 'broker' ? $broker_id : Yii::$app->user->identity->username;
                                 $status = '0';
-                                $registrantRole = 'broker';
+                                $registrantRole = $role;
                             }
                             else
                             {
@@ -3324,7 +3339,7 @@ class PackagesController extends Controller
                             $cancelRequest->save();
                             $walletTransaction = new WalletTransactions();
                             $amount = $order->shares[0]['college_share'];
-                            if(Yii::$app->user->identity->role != 'broker')
+                            if(!$requestOnly)
                             {
                                 $walletTransaction->amount = $amount;
                                 $walletTransaction->broker_id = $broker_id;
@@ -3350,6 +3365,20 @@ class PackagesController extends Controller
                         }
                     }
                 }
+                else if ($requestOnly)
+                {
+                    // عضو بدون سفارش (افزوده‌شده بدون پرداخت): درخواست بدون بازگشت وجه ثبت می‌شود
+                    $cancelRequest = new CancelingRequests();
+                    $cancelRequest->username = $user->username;
+                    $cancelRequest->course_id = (string) $course->_id;
+                    $cancelRequest->order_id = null;
+                    $cancelRequest->college = $course->college;
+                    $cancelRequest->registrant = $role == 'broker' && $course->broker != null ? $course->broker['_id'] : Yii::$app->user->identity->username;
+                    $cancelRequest->request_date = jdate('Y/m/d');
+                    $cancelRequest->status = '0';
+                    $cancelRequest->registrant_role = $role;
+                    $cancelRequest->save();
+                }
                 //Add Cancel Request To Collection
 
                 $userCourses = $user->courses;
@@ -3365,7 +3394,7 @@ class PackagesController extends Controller
                     }
                     if($index !== null)
                     {
-                        if(Yii::$app->user->identity->role != 'broker')
+                        if(!$requestOnly)
                         {
                             unset($userCourses[$index]);
                             $userCourses = array_values($userCourses);
@@ -3377,7 +3406,7 @@ class PackagesController extends Controller
                         $user->courses = $userCourses;
                         if($user->save())
                         {
-                            if(Yii::$app->user->identity->role != 'broker')
+                            if(!$requestOnly)
                             {
                                 // Begin Call AdobeConnect For Remove User From Course
                                 $adminRole = Admin::find()->where(['role' => 'user'])->one();
@@ -3414,7 +3443,7 @@ class PackagesController extends Controller
                 }
             }
         }
-        return $this->redirect(Yii::$app->request->referrer);
+        return $this->redirect(\app\components\SafeRedirect::referrer(['index']));
     }
 
     public function actionEdit_prepayment_installments()
@@ -3757,9 +3786,10 @@ class PackagesController extends Controller
     {
         if(isset($_POST['id']))
         {
-            $id = explode('-', $_POST['id']);
-            $course = Courses::findOne($id[0]);
-            if($course != null)
+            $id = explode('-', (string) $_POST['id'], 2);
+            $course = preg_match('/^[a-f0-9]{24}$/i', $id[0]) ? Courses::findOne($id[0]) : null;
+            // امنیتی: قبلاً هر کاربرِ این صفحه اطلاعات مالی هر دوره‌ای را می‌دید
+            if($course != null && \app\components\CourseAccess::canManage($course) && isset($id[1]))
             {
                 $user = Users::find()->where(['username' => $id[1]])->one();
                 if($user != null)
