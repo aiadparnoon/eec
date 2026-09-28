@@ -16,6 +16,6 @@ class DateRangeAsset extends AssetBundle
         'assets/js/eec-date-range.js',
     ];
     public $depends = [
-        'yii\web\JqueryAsset',
+        'frontend\assets\AppAsset', // بعد از jQuery، flatpickr و select2 قالب
     ];
 }

@@ -296,6 +296,9 @@ JS;
 $this->registerJs($tab);
 // تاریخ اتمام حداقل یک روز بعد از تاریخ شروع (سمت سرور هم بررسی می‌شود)
 \frontend\assets\DateRangeAsset::register($this);
+// همه‌ی فیلدهای انتخابی صفحه با جست‌وجو؛ بعد از بارگذاری کامل تا با مقداردهی‌های قدیمی صفحه تداخل نکند
+\frontend\assets\SelectSearchAsset::register($this);
+$this->registerJs("$(window).on('load', function () { EecSelect.init(document.querySelector('.container-xxl')); });", \yii\web\View::POS_END);
 $this->registerJs("EecDateRange.bind(document.getElementById('start-date'), document.getElementById('end-date'));");
 $url = Yii::$app->urlManager->createAbsoluteUrl('packages/show_user_detail','https');
 $_csrf = Yii::$app->request->getCsrfToken();
@@ -986,16 +989,7 @@ $this->registerJs($digit);
             </span>
         </div>
     </nav>
-    <div class="card mb-3">
-        <div class="card-body">
-            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
-                <h6 class="mb-0"><i class="bx bx-git-commit me-1"></i>فرآیند بررسی و تأیید دوره</h6>
-                <?php list($statusText, $statusColor) = CourseStatus::label($courseDetail); ?>
-                <span class="badge bg-label-<?= Html::encode($statusColor) ?>">وضعیت فعلی: <?= Html::encode($statusText) ?></span>
-            </div>
-            <?= $this->render('_stepper', ['course' => $courseDetail]) ?>
-        </div>
-    </div>
+    <?= $this->render('_process', ['course' => $courseDetail]) ?>
     <div class="card text-center mb-3">
         <div class="card-header d-flex align-items-center justify-content-between">
             <ul class="nav nav-pills" role="tablist">

@@ -26,11 +26,9 @@ $select = function ($attribute, $items, $prompt = 'همه', $extra = []) use ($v
 $date = function ($attribute, $placeholder) use ($value) {
     return Html::textInput('CS[' . $attribute . ']', $value($attribute), ['id' => 'cs-' . $attribute, 'class' => 'form-control cs-date', 'placeholder' => $placeholder, 'autocomplete' => 'off', 'dir' => 'ltr']);
 };
-$this->registerCssFile('@web/assets/vendor/libs/select2/select2.css');
+\frontend\assets\SelectSearchAsset::register($this);
 $this->registerJs(<<<JS
-$('#cs-unit, #cs-broker, #cs-teacher').each(function () {
-    $(this).select2({dropdownParent: $(this).parent(), allowClear: true, placeholder: $(this).data('placeholder'), dir: 'rtl', width: '100%'});
-});
+EecSelect.init(document.getElementById('course-filters'));
 if ($.fn.flatpickr) { $('.cs-date').flatpickr({locale: 'fa', dateFormat: 'Y/m/d', disableMobile: true, allowInput: true}); }
 JS
 );
@@ -38,7 +36,7 @@ $contentTypes = ShortCourseForm::CONTENT_TYPES + ['3' => 'محتوامحور (ق
 ?>
 <div class="card mb-4">
     <div class="card-body">
-        <form action="<?= Url::to(['index']) ?>" method="get">
+        <form action="<?= Url::to(['index']) ?>" method="get" id="course-filters">
             <div class="row g-3 align-items-end">
                 <div class="col-12 col-lg-4">
                     <label class="form-label" for="cs-q">جست‌وجو</label>

@@ -12,6 +12,7 @@ use app\components\CourseAccess;
 use app\components\ShortCourseForm;
 use app\models\ClassroomServers;
 use frontend\assets\DateRangeAsset;
+use frontend\assets\SelectSearchAsset;
 use mihaildev\ckeditor\CKEditor;
 use yii\helpers\Html;
 use yii\helpers\Json;
@@ -19,6 +20,7 @@ use yii\helpers\Url;
 
 $optionsUrl = Json::htmlEncode(Url::to(['unit-options']));
 DateRangeAsset::register($this);
+SelectSearchAsset::register($this);
 $minHours = ShortCourseForm::MIN_HOURS;
 $maxHours = ShortCourseForm::MAX_HOURS;
 $this->registerJs(<<<JS
@@ -28,7 +30,7 @@ $this->registerJs(<<<JS
     function fill(select, items, prompt) {
         select.empty().append($('<option>').val('').text(prompt));
         $.each(items, function (i, item) { select.append($('<option>').val(item.id).text(item.name)); });
-        select.prop('disabled', items.length === 0);
+        select.prop('disabled', items.length === 0).trigger('change.select2');
     }
     form.on('change', '#new-unit', function () {
         var id = $(this).val();
@@ -96,6 +98,8 @@ $this->registerJs(<<<JS
             $('#new-deadline').val(end.formatDate(typeof JDate === 'function' ? new JDate(d) : d, 'Y/m/d'));
         }
     }
+    // همه‌ی فیلدهای انتخابی با جست‌وجو (مثلاً فهرست چندصدتایی دروس)
+    EecSelect.init(document.getElementById('new-course'));
     $('#new-course').on('shown.bs.modal', function () {
         var unit = $('#new-unit');
         if (unit.is('input')) { if (!unit.data('loaded')) { unit.data('loaded', 1).trigger('change'); } return; }
@@ -183,15 +187,15 @@ $serverOptions = $servers + [ClassroomServers::NONE => 'هیچ‌کدام (بر�
                     </div>
                     <div class="col-md-4">
                         <label class="form-label" for="new-broker">کارگزار</label>
-                        <select id="new-broker" name="Courses[broker][_id]" class="form-select" disabled <?= $isBroker ? 'data-force="1"' : '' ?>><option value="">ابتدا واحد را انتخاب کنید</option></select>
+                        <select id="new-broker" name="Courses[broker][_id]" class="form-select" data-placeholder="بدون کارگزار" disabled <?= $isBroker ? 'data-force="1"' : '' ?>><option value="">ابتدا واحد را انتخاب کنید</option></select>
                     </div>
                     <div class="col-md-4">
                         <label class="form-label" for="new-contract">نوع قرارداد کارگزار</label>
-                        <select id="new-contract" name="Courses[broker][contract]" class="form-select" disabled><option value="">ابتدا کارگزار را انتخاب کنید</option></select>
+                        <select id="new-contract" name="Courses[broker][contract]" class="form-select" data-placeholder="انتخاب قرارداد" disabled><option value="">ابتدا کارگزار را انتخاب کنید</option></select>
                     </div>
                     <div class="col-md-4">
                         <label class="form-label" for="new-lesson">درس دوره *</label>
-                        <select id="new-lesson" name="Courses[lessons][0][_id]" class="form-select" required disabled><option value="">ابتدا واحد را انتخاب کنید</option></select>
+                        <select id="new-lesson" name="Courses[lessons][0][_id]" class="form-select" data-placeholder="جست‌وجو و انتخاب درس" required disabled><option value="">ابتدا واحد را انتخاب کنید</option></select>
                     </div>
                     <div class="col-md-4" id="new-server-wrap" style="display:none">
                         <label class="form-label" for="new-server">کلاس روی کدام سرور برگزار شود؟ *</label>
@@ -203,7 +207,7 @@ $serverOptions = $servers + [ClassroomServers::NONE => 'هیچ‌کدام (بر�
                     </div>
                     <div class="col-md-4">
                         <label class="form-label" for="new-teacher">مدرس دوره *</label>
-                        <select id="new-teacher" name="Courses[lessons][0][teachers]" class="form-select" required disabled><option value="">ابتدا واحد را انتخاب کنید</option></select>
+                        <select id="new-teacher" name="Courses[lessons][0][teachers]" class="form-select" data-placeholder="جست‌وجو و انتخاب مدرس" required disabled><option value="">ابتدا واحد را انتخاب کنید</option></select>
                     </div>
                 </div>
             </div>

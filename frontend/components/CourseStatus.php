@@ -62,7 +62,7 @@ class CourseStatus
     {
         $status = (string) $course->status;
         if (self::isCorrected($course))
-            return [$status === self::AWAITING_UNIT ? 'اصلاح‌شده، در انتظار بررسی واحد' : 'اصلاح‌شده، در انتظار بررسی', 'info'];
+            return [$status === self::AWAITING_UNIT ? 'اصلاح‌شده، در انتظار تأیید واحد' : 'اصلاح‌شده، در انتظار بررسی', 'info'];
         return isset(self::LABELS[$status]) ? self::LABELS[$status] : ['نامشخص', 'secondary'];
     }
 
@@ -91,7 +91,9 @@ class CourseStatus
     {
         $status = (string) $course->status;
         if ($status === self::NEEDS_CORRECTION) {
-            $course->status = self::AWAITING;
+            // دوره‌ی کارگزار که مدیر سیستم برگردانده: اصلاح کارگزار دوباره از بررسی واحد می‌گذرد؛
+            // اگر خود واحد اصلاح کند، مستقیم به مدیر سیستم می‌رود
+            $course->status = $byBroker && self::hasBroker($course) ? self::AWAITING_UNIT : self::AWAITING;
             $course->modified = true;
         } else if ($status === self::UNIT_CORRECTION) {
             $course->status = self::AWAITING_UNIT;
@@ -102,66 +104,24 @@ class CourseStatus
         }
     }
 
-    /** با تأیید/بازگشت/رد، برچسب «اصلاح‌شده» پاک می‌شود */
+    /**
+     * با تأیید/بازگشت/رد، برچسب «اصلاح‌شده» پاک می‌شود. returned_by نشان می‌دهد آخرین بار چه کسی دوره را
+     * برگردانده/رد کرده (admin | unit) تا نمودار مراحل وضعیت را درست نشان دهد؛ با تأیید پاک می‌شود.
+     */
     public static function setReviewed($course, $status)
     {
         $course->status = $status;
         $course->modified = false;
+        if (in_array($status, [self::NEEDS_CORRECTION, self::REJECTED], true))
+            $course->returned_by = 'admin';
+        else if (in_array($status, [self::UNIT_CORRECTION, self::UNIT_REJECTED], true))
+            $course->returned_by = 'unit';
+        else if (in_array($status, [self::ACTIVE, self::APPROVED_INACTIVE], true))
+            $course->returned_by = null;
     }
 
-    const STEP_TITLES = [
-        1 => 'ثبت دوره',
-        2 => 'پیش‌نویس',
-        3 => 'ارسال برای بررسی و تأیید',
-        4 => 'بازگشت برای اصلاح',
-        5 => 'نیاز به اصلاح',
-        6 => 'اصلاح موارد',
-        7 => 'ارسال مجدد، در انتظار بررسی',
-        8 => 'بررسی مجدد',
-        9 => 'تأیید رئیس مرکز',
-        10 => 'تأیید شده / فعال',
-    ];
-
-    /**
-     * مراحل فرآیند برای نمودار مرحله‌ای (بند ۶ صورتجلسه).
-     * حلقه‌ی اصلاح (مراحل ۴ تا ۸) فقط وقتی دوره به اصلاح برگشته باشد طی می‌شود؛ در غیر این صورت skipped است.
-     *
-     * @return array[] ['number', 'title', 'state' => done|current|todo|skipped|failed]
-     */
-    public static function steps($course)
+    public static function hasBroker($course)
     {
-        $status = (string) $course->status;
-        // [مراحل انجام‌شده, مرحله‌ی جاری, مراحل حذف‌شده, مرحله‌ی ناموفق]
-        if ($status === self::DRAFT)
-            $plan = [[1], 2, [], null];
-        else if (in_array($status, [self::NEEDS_CORRECTION, self::UNIT_CORRECTION], true))
-            $plan = [[1, 2, 3, 4], 5, [], null];
-        else if (self::isCorrected($course))
-            $plan = [[1, 2, 3, 4, 5, 6], 7, [], null];
-        else if (in_array($status, [self::AWAITING, self::AWAITING_UNIT], true))
-            $plan = [[1, 2], 3, [4, 5, 6, 7, 8], null];
-        else if (in_array($status, [self::ACTIVE, self::APPROVED_INACTIVE, self::FINISHED], true))
-            $plan = [[1, 2, 3, 9, 10], null, [4, 5, 6, 7, 8], null];
-        else if (in_array($status, [self::REJECTED, self::UNIT_REJECTED], true))
-            $plan = [[1, 2, 3], null, [4, 5, 6, 7, 8], 9];
-        else
-            $plan = [[], 1, [], null];
-
-        list($done, $current, $skipped, $failed) = $plan;
-        $steps = [];
-        foreach (self::STEP_TITLES as $number => $title) {
-            if ($number === $failed)
-                $state = 'failed';
-            else if ($number === $current)
-                $state = 'current';
-            else if (in_array($number, $done, true))
-                $state = 'done';
-            else if (in_array($number, $skipped, true))
-                $state = 'skipped';
-            else
-                $state = 'todo';
-            $steps[] = ['number' => $number, 'title' => $title, 'state' => $state];
-        }
-        return $steps;
+        return is_array($course->broker) ? !empty($course->broker['_id']) : (is_object($course->broker) && !empty($course->broker->_id));
     }
 }
