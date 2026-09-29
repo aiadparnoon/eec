@@ -69,11 +69,46 @@
         if (removed) showHint(input, rule.hint);
     }
 
-    document.addEventListener('input', function (e) {
-        if (e.target && e.target.hasAttribute && e.target.hasAttribute('data-input')) clean(e.target);
-    }, true);
+    // فیلدهای عددی بدون data-input (فرم‌های قدیمی): فقط ارقام فارسی/عربی به انگلیسی تبدیل می‌شوند.
+    // همان فهرست نام‌های RequestGuard سمت سرور (که به‌هرحال پیش از ذخیره تبدیل می‌کند).
+    var NUMERIC_NAME = /(price|amount|prepayment|installment|duration|number|mobile|phone|tel|username|national|\[id\]|capacity|serial|sub_service|share|percent|deadline|\[from\]|\[to\]|\[time\]|date|zip|postal|shsh|count|code|license|sheba|iban|card|account|credit|score|grade|hours|year|economic)/i;
+    var SKIP_NAME = /(password|title|description|address|text|content|message)/i;
+
+    function isNumericField(el) {
+        if (el.tagName !== 'INPUT' || el.hasAttribute('data-input')) return false;
+        var type = (el.getAttribute('type') || 'text').toLowerCase();
+        if (type === 'password' || type === 'file' || type === 'checkbox' || type === 'radio' || type === 'hidden') return false;
+        if (el.getAttribute('inputmode') === 'numeric' || type === 'number' || type === 'tel') return true;
+        var name = el.getAttribute('name') || '';
+        return NUMERIC_NAME.test(name) && !SKIP_NAME.test(name);
+    }
+
+    function latin(el) {
+        if (!/[۰-۹٠-٩]/.test(el.value)) return;
+        var pos = el.selectionStart;
+        el.value = toLatinDigits(el.value);
+        if (typeof pos === 'number' && document.activeElement === el) {
+            try { el.setSelectionRange(pos, pos); } catch (e) {}
+        }
+    }
+
+    function onEdit(e) {
+        var el = e.target;
+        if (!el || !el.hasAttribute) return;
+        if (el.hasAttribute('data-input')) clean(el);
+        else if (isNumericField(el)) latin(el);
+    }
+
+    document.addEventListener('input', onEdit, true);
     // مقدارهایی که با JS پر می‌شوند (مودال ویرایش) هم یکسان شوند
-    document.addEventListener('change', function (e) {
-        if (e.target && e.target.hasAttribute && e.target.hasAttribute('data-input')) clean(e.target);
+    document.addEventListener('change', onEdit, true);
+    // پیش از ارسال هر فرم، همه‌ی فیلدهای عددی یک‌بار دیگر یکسان می‌شوند (مثلاً مقدار چسبانده‌شده)
+    document.addEventListener('submit', function (e) {
+        var form = e.target;
+        if (!form || !form.querySelectorAll) return;
+        Array.prototype.forEach.call(form.querySelectorAll('input'), function (el) {
+            if (el.hasAttribute('data-input')) clean(el);
+            else if (isNumericField(el)) latin(el);
+        });
     }, true);
 })();

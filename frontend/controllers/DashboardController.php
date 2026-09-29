@@ -465,6 +465,8 @@ class DashboardController extends \common\component\Controller
             return $this->workflowBack('error', 'دوره یافت نشد یا تأیید نهایی فقط توسط مدیر سیستم امکان‌پذیر است', $package);
         if ((string) $package->status === \app\components\CourseStatus::ACTIVE)
             return $this->workflowBack('info', 'این دوره قبلاً تأیید شده است', $package);
+        if ((string) $package->status === \app\components\CourseStatus::DRAFT)
+            return $this->workflowBack('error', 'دوره‌ی پیش‌نویس هنوز برای بررسی ارسال نشده است', $package);
 
         $college = Colleges::findOne($package->college);
         $blocker = $this->approvalBlocker($package, $college);
@@ -580,6 +582,9 @@ class DashboardController extends \common\component\Controller
     {
         if ((string) $package->status === $status)
             return $this->workflowBack('info', 'وضعیت دوره از قبل همین است', $package);
+        // پیش‌نویس هنوز برای بررسی ارسال نشده است: نه اصلاح و نه رد
+        if ((string) $package->status === \app\components\CourseStatus::DRAFT)
+            return $this->workflowBack('error', 'دوره‌ی پیش‌نویس هنوز برای بررسی ارسال نشده است', $package);
         $input = Yii::$app->request->post('Courses');
         $reason = is_array($input) && isset($input['rejection_reason']) && is_scalar($input['rejection_reason']) ? trim((string) $input['rejection_reason']) : '';
         if ($reason === '')

@@ -258,7 +258,9 @@
         if ($)
             $(form).on('change', 'select', function () { if (visual(this).classList.contains('is-invalid')) validateField(this); });
         form.addEventListener('submit', function (e) {
-            if (!validate(form)) {
+            // دکمه‌هایی مثل «حذف» با formnovalidate بدون بررسی فیلدها ارسال می‌شوند
+            var skip = e.submitter && e.submitter.hasAttribute('formnovalidate');
+            if (!skip && !validate(form)) {
                 e.preventDefault();
                 e.stopImmediatePropagation();
                 toast('error', 'لطفاً موارد مشخص‌شده با رنگ قرمز را تکمیل یا اصلاح کنید');

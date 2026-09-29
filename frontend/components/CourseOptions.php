@@ -111,8 +111,8 @@ class CourseOptions
                 $name .= ' (شرکت ' . $broker->company_info['company_title'] . ')';
             $contracts = [];
             foreach ((array) $broker->contracts as $contract)
-                if (is_array($contract) && isset($contract['id']))
-                    $contracts[] = ['id' => (string) $contract['id'], 'title' => (isset($contract['title']) ? (string) $contract['title'] : '') . (isset($contract['share']) ? ' (' . $contract['share'] . ' درصد)' : '')];
+                if (is_array($contract) && isset($contract['id']) && self::contractActive($contract))
+                    $contracts[] =['id' => (string) $contract['id'], 'title' => (isset($contract['title']) ? (string) $contract['title'] : '') . (isset($contract['share']) ? ' (' . $contract['share'] . ' درصد)' : '')];
             if (empty($contracts))
                 continue; // بدون قرارداد، دوره قابل ثبت نیست
             $brokers[] = ['id' => (string) $broker->_id, 'name' => $name !== '' ? $name : 'کارگزار بدون نام', 'contracts' => $contracts];
@@ -121,9 +121,27 @@ class CourseOptions
         foreach (Teachers::find()->select(['first_name', 'last_name'])->where(['colleges' => $id])->orderBy(['last_name' => SORT_ASC])->all() as $teacher)
             $teachers[] = ['id' => (string) $teacher->_id, 'name' => trim($teacher->first_name . ' ' . $teacher->last_name)];
         $lessons = [];
-        foreach (Lessons::find()->select(['title'])->where(['college' => $id])->orderBy(['title' => SORT_ASC])->all() as $lesson)
-            $lessons[] = ['id' => (string) $lesson->_id, 'name' => (string) $lesson->title];
+        foreach (Lessons::find()->select(['title'])->where(['college' => $id])->orderBy(['title' => SORT_ASC])->all() as $lesson) {
+            $title = self::cleanTitle($lesson->title);
+            if ($title !== '') // دروس بی‌عنوان (فقط فاصله) نمایش داده نمی‌شوند
+                $lessons[] = ['id' => (string) $lesson->_id, 'name' => $title];
+        }
         return ['brokers' => $brokers, 'teachers' => $teachers, 'lessons' => $lessons];
+    }
+
+    /** عنوان بدون فاصله/نیم‌فاصله‌ی ابتدا و انتها؛ عنوان غیرمتنی = خالی */
+    public static function cleanTitle($title)
+    {
+        return is_string($title) ? trim(preg_replace('/^[\s\x{200C}\x{200F}\x{200E}]+|[\s\x{200C}\x{200F}\x{200E}]+$/u', '', $title)) : '';
+    }
+
+    /**
+     * قرارداد کارگزار قابل انتخاب است اگر مدیر آن را غیرفعال نکرده باشد (status = '0').
+     * قراردادهای قدیمی بدون فیلد وضعیت فعال حساب می‌شوند.
+     */
+    public static function contractActive(array $contract)
+    {
+        return !isset($contract['status']) || (string) $contract['status'] !== '0';
     }
 
     /**

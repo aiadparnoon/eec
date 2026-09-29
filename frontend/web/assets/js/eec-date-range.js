@@ -28,26 +28,27 @@
         return fp.formatDate(n, 'Y-m-d');
     }
 
-    function feedback(endInput) {
+    function feedback(endInput, message) {
         var fp = endInput._flatpickr, target = fp && fp.altInput ? fp.altInput : endInput;
         var box = target.parentNode.querySelector('.eec-date-range-error');
         if (!box) {
             box = document.createElement('div');
             box.className = 'invalid-feedback eec-date-range-error';
-            box.textContent = MESSAGE;
+            box.textContent = message || MESSAGE;
             target.insertAdjacentElement('afterend', box);
         }
         return {target: target, box: box};
     }
 
-    function setError(endInput, on) {
-        var f = feedback(endInput);
+    function setError(endInput, on, message) {
+        var f = feedback(endInput, message);
         f.target.classList.toggle('is-invalid', on);
         f.box.style.display = on ? 'block' : 'none';
-        f.target.setCustomValidity(on ? MESSAGE : '');
+        f.target.setCustomValidity(on ? (message || MESSAGE) : '');
     }
 
-    function bind(start, end) {
+    /** message: پیام دلخواه (مثلاً برای تاریخ درس)؛ پیش‌فرض پیام تاریخ دوره */
+    function bind(start, end, message) {
         if (!start || !end) return;
         var tries = 0;
         (function wait() {
@@ -64,10 +65,10 @@
                 efp.set('minDate', s ? nextDay(efp, s) : null);
                 if (invalid) {
                     efp.clear();
-                    setError(end, true);
+                    setError(end, true, message);
                     return false;
                 }
-                if (fromEnd || e) setError(end, false);
+                if (fromEnd || e) setError(end, false, message);
                 return true;
             }
 
@@ -82,8 +83,8 @@
                     ev.preventDefault();
                     ev.stopImmediatePropagation();
                     efp.clear();
-                    setError(end, true);
-                    if (window.toastr) window.toastr.error(MESSAGE, '', {positionClass: 'toast-top-center'});
+                    setError(end, true, message);
+                    if (window.toastr) window.toastr.error(message || MESSAGE, '', {positionClass: 'toast-top-center'});
                 }
             });
             check(false);

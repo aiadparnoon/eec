@@ -10,22 +10,13 @@
 use app\components\CourseAccess;
 use app\components\PackageForm;
 use app\components\ShortCourseForm;
-use app\models\ClassroomServers;
-use frontend\assets\DateRangeAsset;
-use frontend\assets\FormValidateAsset;
-use frontend\assets\InputGuardAsset;
-use frontend\assets\SelectSearchAsset;
 use frontend\controllers\CourseMembersController;
-use mihaildev\ckeditor\CKEditor;
 use yii\helpers\Html;
 use yii\helpers\Json;
 use yii\helpers\Url;
 
 $this->title = 'ثبت دوره‌ی میان‌مدت';
-DateRangeAsset::register($this);
-FormValidateAsset::register($this);
-SelectSearchAsset::register($this);
-InputGuardAsset::register($this);
+\frontend\assets\CourseFormAsset::register($this);
 
 $flash = Yii::$app->session->getFlash(CourseMembersController::FLASH);
 if (is_array($flash) && isset($flash['message'])) {
@@ -34,9 +25,6 @@ if (is_array($flash) && isset($flash['message'])) {
 }
 
 $isAdmin = CourseAccess::isAdmin();
-$isBroker = CourseAccess::role() === 'broker';
-$fixedUnit = !CourseAccess::canChooseUnit() && count($units) === 1 ? [key($units), current($units)] : null;
-$serverOptions = $servers + [ClassroomServers::NONE => 'هیچ‌کدام (برگزاری در سامانه‌ی دیگر / بدون کلاس آنلاین)'];
 $config = Json::htmlEncode([
     'optionsUrl' => Url::to(['unit-options']),
     'minHours' => PackageForm::MIN_HOURS,
@@ -61,28 +49,14 @@ $this->registerJs(<<<JS
         $(input).flatpickr({locale: 'fa', dateFormat: 'Y-m-d', altInput: true, altFormat: 'Y/m/d', disableMobile: true, minDate: bounds.from || null, maxDate: bounds.to || null});
     }
 
-    // --- واحد → کارگزاران، مدرسان و دروس
-    form.on('change', '#pkg-unit', function () {
-        var id = $(this).val();
-        $('#pkg-lessons').empty().trigger('change');
-        fill($('#pkg-broker'), [], 'بدون کارگزار');
-        fill($('#pkg-contract'), [], 'ابتدا کارگزار را انتخاب کنید');
-        if (!id) return;
-        $.getJSON(cfg.optionsUrl, {id: id}).done(function (data) {
-            unitData = data;
-            fill($('#pkg-broker'), data.brokers, data.brokers.length ? 'بدون کارگزار' : 'کارگزاری با قرارداد برای این واحد ثبت نشده');
-            if (data.brokers.length === 1 && $('#pkg-broker').data('force')) $('#pkg-broker').val(data.brokers[0].id).trigger('change');
-            var lessons = $('#pkg-lessons').empty();
-            $.each(data.lessons, function (i, item) { lessons.append($('<option>').val(item.id).text(item.name)); });
-            lessons.prop('disabled', data.lessons.length === 0).trigger('change');
-        });
+    // --- واحد، کارگزار، قرارداد، ظرفیت، مدت و تاریخ‌ها: رفتار مشترک با صفحه‌ی ویرایش (eec-course-form.js)
+    form.on('eec:unit-options', function (e, data) {
+        unitData = data;
+        var lessons = $('#pkg-lessons').empty();
+        $.each(data.lessons, function (i, item) { lessons.append($('<option>').val(item.id).text(item.name)); });
+        lessons.prop('disabled', data.lessons.length === 0).trigger('change');
     });
-    form.on('change', '#pkg-broker', function () {
-        var id = $(this).val(), broker = null;
-        $.each(unitData.brokers, function (i, b) { if (b.id === id) broker = b; });
-        fill($('#pkg-contract'), broker ? $.map(broker.contracts, function (c) { return {id: c.id, name: c.title}; }) : [], id ? 'لطفاً قرارداد را انتخاب کنید' : 'ابتدا کارگزار را انتخاب کنید');
-        $('#pkg-contract').prop('required', !!id);
-    });
+    form.on('eec:range', onRange);
 
     // --- دروس انتخاب‌شده → کارت هر درس
     form.on('change', '#pkg-lessons', function () {
@@ -107,6 +81,8 @@ $this->registerJs(<<<JS
             box.append(card);
             EecSelect.init(card[0]);
             card.find('[data-f="from"], [data-f="to"]').each(function () { datePicker(this, courseRange()); });
+            // اتمام هر درس حداقل یک روز بعد از شروع آن (سرور هم بررسی می‌کند)
+            EecDateRange.bind(card.find('[data-f="from"]')[0], card.find('[data-f="to"]')[0], 'تاریخ اتمام درس باید حداقل یک روز بعد از تاریخ شروع آن باشد');
         });
         box.find('.js-lesson').each(function (i) {
             var c = $(this);
@@ -122,41 +98,12 @@ $this->registerJs(<<<JS
         $('#pkg-lessons-empty').toggle(selected.length === 0);
     });
 
-    // --- ظرفیت
-    form.on('change', '#pkg-capacity', function () {
-        var type = $(this).val();
-        $('#pkg-capacity-number-wrap').toggle(type === '2');
-        $('#pkg-capacity-number').prop('required', type === '2');
-        $('#pkg-contract-file-wrap').toggle(type === '3');
-        $('#pkg-contract-file').prop('required', type === '3');
-    });
-    form.on('input change', '#pkg-duration', function () {
-        var v = parseInt(this.value, 10), msg = isNaN(v) ? 'مدت دوره را وارد کنید' : (v < cfg.minHours ? 'دوره‌ی میان‌مدت حداقل ' + fa(cfg.minHours) + ' ساعت است؛ دوره‌ی کوتاه‌تر را از بخش کوتاه‌مدت ثبت کنید' : '');
-        this.setCustomValidity(msg === 'مدت دوره را وارد کنید' ? '' : msg);
-        $('#pkg-duration-help').toggle(!msg);
-    });
-
-    // --- تاریخ دوره: اتمام حداقل یک روز بعد؛ تاریخ دروس و اقساط داخل بازه‌ی دوره
-    if ($.fn.flatpickr) {
-        var opts = {locale: 'fa', dateFormat: 'Y-m-d', altInput: true, altFormat: 'Y/m/d', disableMobile: true};
-        $('#pkg-start, #pkg-end').flatpickr($.extend({}, opts, {onChange: onRange}));
-        EecDateRange.bind(document.getElementById('pkg-start'), document.getElementById('pkg-end'));
-    }
+    // بازه‌ی دوره: تاریخ دروس و سررسید اقساط داخل بازه
     function onRange() {
         var r = courseRange();
         form.find('[data-f="from"], [data-f="to"], [data-f="deadline"]').each(function () {
             if (this._flatpickr) { this._flatpickr.set('minDate', r.from || null); this._flatpickr.set('maxDate', r.to || null); }
         });
-        var s = $('#pkg-start')[0]._flatpickr, e = $('#pkg-end')[0]._flatpickr;
-        if (s && e && s.selectedDates[0] && e.selectedDates[0]) {
-            var days = Math.floor((e.selectedDates[0].getTime() - s.selectedDates[0].getTime()) / 86400000);
-            if (days >= 1) {
-                var d = new Date(s.selectedDates[0].getTime() + Math.floor(days / 4) * 86400000);
-                $('#pkg-deadline').val(e.formatDate(typeof JDate === 'function' ? new JDate(d) : d, 'Y/m/d'));
-                return;
-            }
-        }
-        $('#pkg-deadline').val('');
     }
 
     // --- شرایط اقساطی: مجموع = شهریه‌ی قابل پرداخت، سررسید داخل بازه‌ی دوره
@@ -192,14 +139,9 @@ $this->registerJs(<<<JS
     }
     form.on('input change', '#pkg-price, #pkg-discount, #pkg-prepayment, .js-amount', total);
 
-    EecSelect.init(form[0]);
+    EecCourseForm.init(form[0], {optionsUrl: cfg.optionsUrl, minHours: cfg.minHours, kind: 'package'});
     // پیام خطای هر فیلد زیر همان فیلد؛ خطای سرور هم بدون از دست رفتن اطلاعات فرم
     EecValidate.bind(form[0], {ajax: true});
-    var unit = $('#pkg-unit');
-    if (unit.is('input') || (unit.find('option').length === 2 && !unit.val())) {
-        if (!unit.is('input')) unit.val(unit.find('option:last').val());
-        unit.trigger('change');
-    }
     total();
 })();
 JS
@@ -215,88 +157,7 @@ JS
     </nav>
 
     <?= Html::beginForm(['new'], 'post', ['enctype' => 'multipart/form-data', 'id' => 'package-form']) ?>
-    <div class="card mb-4">
-        <h5 class="card-header">مشخصات دوره</h5>
-        <div class="card-body">
-            <div class="row g-3 mb-4">
-                <div class="col-md-6"><label class="form-label" for="pkg-title-fa">عنوان اصلی فارسی *</label><input type="text" id="pkg-title-fa" name="Courses[title][main_fa]" class="form-control" required maxlength="250"></div>
-                <div class="col-md-6"><label class="form-label" for="pkg-title-en">عنوان اصلی انگلیسی</label><input type="text" id="pkg-title-en" name="Courses[title][main_en]" class="form-control" maxlength="250" dir="ltr" data-input="en"></div>
-                <div class="col-md-6"><label class="form-label" for="pkg-degree-fa">عنوان فارسی (داخل گواهی) *</label><input type="text" id="pkg-degree-fa" name="Courses[title][degree_fa]" class="form-control" required maxlength="250"></div>
-                <div class="col-md-6"><label class="form-label" for="pkg-degree-en">عنوان انگلیسی (داخل گواهی)</label><input type="text" id="pkg-degree-en" name="Courses[title][degree_en]" class="form-control" maxlength="250" dir="ltr" data-input="en"></div>
-            </div>
-            <div class="row g-3 mb-4">
-                <div class="col-md-3"><label class="form-label" for="pkg-price">قیمت اصلی (تومان) *</label><input type="text" id="pkg-price" name="Courses[price]" class="form-control" required inputmode="numeric" maxlength="12" data-input="digits" dir="ltr"></div>
-                <?php if (CourseAccess::canSetDiscount()): ?>
-                    <div class="col-md-3"><label class="form-label" for="pkg-discount">قیمت با تخفیف (تومان)</label><input type="text" id="pkg-discount" name="Courses[discount_price]" class="form-control" inputmode="numeric" maxlength="12" data-input="digits" dir="ltr"><small class="text-muted">خالی = بدون تخفیف</small></div>
-                <?php else: ?>
-                    <input type="hidden" id="pkg-discount" value="">
-                <?php endif; ?>
-                <div class="col-md-3">
-                    <label class="form-label" for="pkg-duration">مدت زمان دوره (ساعت) *</label>
-                    <input type="text" id="pkg-duration" name="Courses[duration]" class="form-control" required inputmode="numeric" maxlength="4" data-input="digits" dir="ltr">
-                    <small class="text-muted" id="pkg-duration-help">حداقل <?= PackageForm::MIN_HOURS ?> ساعت</small>
-                </div>
-                <div class="col-md-3"><label class="form-label" for="pkg-time">زمان برگزاری *</label><input type="text" id="pkg-time" name="Courses[time]" class="form-control" required maxlength="100" placeholder="مثلاً پنجشنبه‌ها ۹ تا ۱۳"></div>
-                <div class="col-md-3"><label class="form-label" for="pkg-place">محل برگزاری *</label><input type="text" id="pkg-place" name="Courses[place]" class="form-control" required maxlength="200"></div>
-                <div class="col-md-3">
-                    <label class="form-label" for="pkg-content-type">نوع دوره *</label>
-                    <?= Html::dropDownList('Courses[content_type]', null, ShortCourseForm::CONTENT_TYPES, ['id' => 'pkg-content-type', 'class' => 'form-select', 'prompt' => 'انتخاب', 'required' => true]) ?>
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label" for="pkg-capacity">نوع ظرفیت *</label>
-                    <?= Html::dropDownList('Courses[student_capacity][type]', null, $capacityTypes, ['id' => 'pkg-capacity', 'class' => 'form-select', 'prompt' => 'انتخاب', 'required' => true]) ?>
-                </div>
-                <div class="col-md-3" id="pkg-capacity-number-wrap" style="display:none">
-                    <label class="form-label" for="pkg-capacity-number">ظرفیت (نفر) *</label>
-                    <input type="text" id="pkg-capacity-number" name="Courses[student_capacity][number]" data-label="ظرفیت" class="form-control" inputmode="numeric" maxlength="5" data-input="digits" dir="ltr">
-                </div>
-                <div class="col-md-6" id="pkg-contract-file-wrap" style="display:none">
-                    <label class="form-label" for="pkg-contract-file">فایل قرارداد *</label>
-                    <input type="file" id="pkg-contract-file" name="Courses[contract_file]" class="form-control" accept=".pdf,.jpg,.jpeg,.png,.webp">
-                    <small class="text-muted">PDF یا تصویر، حداکثر ۱۰ مگابایت</small>
-                </div>
-            </div>
-            <div class="row g-3 mb-4">
-                <div class="col-md-3"><label class="form-label" for="pkg-start">تاریخ شروع دوره *</label><input type="text" id="pkg-start" name="Courses[date][from]" class="form-control" required autocomplete="off"></div>
-                <div class="col-md-3"><label class="form-label" for="pkg-end">تاریخ اتمام دوره *</label><input type="text" id="pkg-end" name="Courses[date][to]" class="form-control" required autocomplete="off"><small class="text-muted">حداقل یک روز بعد از شروع</small></div>
-                <div class="col-md-3"><label class="form-label" for="pkg-deadline">آخرین مهلت ثبت عضو</label><input type="text" id="pkg-deadline" class="form-control" disabled placeholder="خودکار"><small class="text-muted">یک‌چهارم ابتدای دوره</small></div>
-                <div class="col-md-3"><label class="form-label" for="pkg-image">تصویر دوره</label><input type="file" id="pkg-image" name="Courses[preview_image]" class="form-control" accept=".jpg,.jpeg,.png,.webp"><small class="text-muted">حداکثر ۲ مگابایت</small></div>
-            </div>
-            <label class="form-label">توضیحات دوره</label>
-            <?= CKEditor::widget(['name' => 'Courses[description]', 'editorOptions' => ['preset' => 'standard', 'inline' => false]]) ?>
-        </div>
-    </div>
-
-    <div class="card mb-4">
-        <h5 class="card-header">واحد، کارگزار و کلاس آنلاین</h5>
-        <div class="card-body">
-            <div class="row g-3">
-                <div class="col-md-3">
-                    <label class="form-label" for="pkg-unit">واحد *</label>
-                    <?php if ($fixedUnit !== null): ?>
-                        <input type="text" class="form-control" value="<?= Html::encode($fixedUnit[1]) ?>" disabled>
-                        <input type="hidden" id="pkg-unit" name="Courses[college]" value="<?= Html::encode($fixedUnit[0]) ?>">
-                    <?php elseif (empty($units)): ?>
-                        <input type="text" class="form-control is-invalid" value="واحدی برای حساب شما تعریف نشده است" disabled>
-                    <?php else: ?>
-                        <?= Html::dropDownList('Courses[college]', null, $units, ['id' => 'pkg-unit', 'class' => 'form-select', 'prompt' => 'انتخاب واحد', 'required' => true]) ?>
-                    <?php endif; ?>
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label" for="pkg-broker">کارگزار</label>
-                    <select id="pkg-broker" name="Courses[broker][_id]" class="form-select" data-placeholder="بدون کارگزار" disabled <?= $isBroker ? 'data-force="1"' : '' ?>><option value="">ابتدا واحد را انتخاب کنید</option></select>
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label" for="pkg-contract">نوع قرارداد کارگزار</label>
-                    <select id="pkg-contract" name="Courses[broker][contract]" class="form-select" data-placeholder="انتخاب قرارداد" disabled><option value="">ابتدا کارگزار را انتخاب کنید</option></select>
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label" for="pkg-server">کلاس روی کدام سرور برگزار شود؟ *</label>
-                    <?= Html::dropDownList('Courses[classroom_server]', null, $serverOptions, ['id' => 'pkg-server', 'class' => 'form-select', 'prompt' => 'انتخاب سرور', 'required' => true]) ?>
-                </div>
-            </div>
-        </div>
-    </div>
+    <?= $this->render('@frontend/views/courses/_form-fields', ['kind' => 'package', 'model' => null, 'units' => $units, 'servers' => $servers, 'capacityTypes' => $capacityTypes, 'p' => 'pkg', 'readOnly' => false]) ?>
 
     <div class="card mb-4">
         <h5 class="card-header">دروس دوره</h5>

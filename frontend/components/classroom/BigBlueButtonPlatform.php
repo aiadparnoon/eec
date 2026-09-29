@@ -71,6 +71,23 @@ class BigBlueButtonPlatform implements ClassroomPlatform
         return true;
     }
 
+    /** جلسه‌ی BBB هنگام ورود ساخته می‌شود؛ تاریخ و مدرس از خود دوره خوانده می‌شود */
+    public function updateLesson($courseId, $lessonId, $from, $to, $teacherAdminId = null)
+    {
+        return true;
+    }
+
+    public function deleteLesson($courseId, $lessonId)
+    {
+        $course = Courses::findOne((string) $courseId);
+        if ($course === null || !is_array($course->classroom_meetings) || !isset($course->classroom_meetings[(string) $lessonId]))
+            return true;
+        $meetings = $course->classroom_meetings;
+        unset($meetings[(string) $lessonId]);
+        $course->classroom_meetings = $meetings;
+        return $course->save(false, ['classroom_meetings']);
+    }
+
     /** حضور و غیاب BBB از طریق وب‌هوک/Learning Analytics ثبت می‌شود؛ هنوز پیاده نشده */
     public function attendance($user, $course)
     {

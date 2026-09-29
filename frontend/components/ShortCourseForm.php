@@ -201,7 +201,10 @@ class ShortCourseForm
                 return self::fail('اطلاعات کارگزاری شما یافت نشد');
             $brokerId = (string) $own->_id;
         }
+        // کارگزار و نوع قرارداد در ثبت دوره الزامی است؛ دوره‌های قدیمیِ بدون کارگزار در ویرایش همان‌طور می‌مانند
         if ($brokerId === '') {
+            if ($model->isNewRecord || CourseStatus::hasBroker($model) || (string) $model->college !== (string) $model->getOldAttribute('college'))
+                return self::fail('کارگزار دوره را انتخاب کنید', 'Courses[broker][_id]');
             $model->broker = null;
             return true;
         }
@@ -211,12 +214,15 @@ class ShortCourseForm
         if ($record === null || (string) $record->status !== '1' || !in_array($unit, StudentAccess::normalizeColleges($record->college), true))
             return self::fail('کارگزار انتخاب‌شده متعلق به این واحد نیست یا فعال نیست', 'Courses[broker][_id]');
         $contract = isset($broker['contract']) && is_scalar($broker['contract']) ? (string) $broker['contract'] : '';
+        // قرارداد غیرفعال‌شده توسط مدیر قابل انتخاب نیست؛ مگر همان قراردادی که از قبل روی دوره بوده
+        $old = $model->getOldAttribute('broker');
+        $keep = is_array($old) && isset($old['_id'], $old['contract']) && (string) $old['_id'] === $brokerId ? (string) $old['contract'] : null;
         $contractIds = [];
         foreach ((array) $record->contracts as $item)
-            if (is_array($item) && isset($item['id']))
+            if (is_array($item) && isset($item['id']) && (CourseOptions::contractActive($item) || (string) $item['id'] === $keep))
                 $contractIds[] = (string) $item['id'];
         if ($contract === '' || !in_array($contract, $contractIds, true))
-            return self::fail('قرارداد کارگزار را انتخاب کنید', 'Courses[broker][contract]');
+            return self::fail('نوع قرارداد کارگزار را انتخاب کنید (قراردادهای غیرفعال قابل انتخاب نیستند)', 'Courses[broker][contract]');
         $model->broker = ['_id' => $brokerId, 'contract' => $contract];
         return true;
     }

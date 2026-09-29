@@ -14,6 +14,8 @@ return [
     'bootstrap' => ['log'],
     'controllerNamespace' => 'frontend\controllers',
     'homeUrl' => '',
+    // حذف عملگرهای مونگو ($...) از ورودی‌ها و تبدیل ارقام فارسی فیلدهای عددی (app\components\RequestGuard)
+    'on beforeRequest' => ['app\components\RequestGuard', 'handle'],
     'components' => [
         'request' => [
             'baseUrl' => '',

@@ -308,15 +308,8 @@ class PackagesController extends Controller
      */
     private function renderEditPackageView(Courses $model)
     {
-        if (Yii::$app->user->identity->role == 'user' || Yii::$app->user->identity->role == 'cnt')
-        {
-            $colleges = Colleges::find()->all();
-            if ($model->lessons != null)
-                if (count($model->lessons) > 0)
-                    $colleges = Colleges::find()->where(['_id' => $model->college])->all();
-        }
-        else
-            $colleges = Colleges::find()->where(['_id' => Yii::$app->user->identity->college])->all();
+        // مدیر سیستم همه‌ی واحدها را می‌بیند و می‌تواند واحد دوره را عوض کند؛ بقیه فقط واحد خودشان (نمایشی)
+        $unitTitles = \app\components\CourseOptions::selectableUnits();
         $teachers = Teachers::find()->where(['like', 'colleges', $model->college])->all();
         $collegeLessons = Lessons::find()->where(['college' => $model->college])->all();
 //                if($model->lessons != null)
@@ -328,9 +321,8 @@ class PackagesController extends Controller
         $dataProvider = $searchModel->search(Yii::$app->request->queryParams, (string) $model->_id);
         $allowEdit = \app\components\CourseAccess::canEdit($model);
         return $this->render('edit-package', [
-            'colleges' => ArrayHelper::map($colleges, function ($m) {
-                return (string) $m->_id;
-            }, 'title'),
+            'colleges' => $unitTitles,
+            'capacityTypes' => \app\components\CourseOptions::capacityTypes(),
             'model' => $model,
             'teachers' => $teachers,
             'collegeLessons' => $collegeLessons,
@@ -1305,281 +1297,125 @@ class PackagesController extends Controller
         return Lessons::findOne($_id);
     }
 
+    /**
+     * ویرایش یا حذف یک درس دوره‌ی میان‌مدت (تب «دروس دوره»).
+     * دسترسی: همان ویرایش دوره (CourseAccess::canEdit). تاریخ‌ها داخل بازه‌ی دوره و اتمام حداقل یک روز بعد از شروع.
+     * اگر دوره کلاس آنلاین دارد، تغییر ابتدا در سامانه‌ی کلاس اعمال می‌شود و فقط در صورت موفقیت ذخیره می‌شود.
+     */
     public function actionEdit_course_in_package()
     {
-        if (Yii::$app->request->isPost) {
-            $course = Courses::findOne(Yii::$app->request->post()['Courses']['_id']);
-            if ($course != null)
-            {
-                $lessons = $course->lessons;
-                $lessons = array_values($course->lessons);
-                $course->lessons = $lessons;
-                $course->save();
-                if (isset($_POST['edit']))
-                {
-                    $from = Yii::$app->request->post()['Courses']['lessons'][Yii::$app->request->post('row')]['date']['from'];
-                    $to = Yii::$app->request->post()['Courses']['lessons'][Yii::$app->request->post('row')]['date']['to'];
-                    $fromm = str_replace('-','',$from);
-                    $too = str_replace('-','',$to);
-                    if($fromm <= $too)
-                    {
-                        $lessonId = Yii::$app->request->post()['Courses']['lessons'][Yii::$app->request->post('row')]['_id'];
-                        $lessons = $course->lessons;
-                       if($course->content_type == '1' || $course->content_type == '2')
-                       {
-                           $meeting = null;
-                           if(array_key_exists('meeting', $lessons[Yii::$app->request->post('row')]))
-                                $meeting = $lessons[Yii::$app->request->post('row')]['meeting'];
-                           $lessons[Yii::$app->request->post('row')] = Yii::$app->request->post()['Courses']['lessons'][Yii::$app->request->post('row')];
-                           if($meeting != null)
-                               $lessons[Yii::$app->request->post('row')]['meeting'] = $meeting;
-                       }
-                       else
-                           $lessons[Yii::$app->request->post('row')] = Yii::$app->request->post()['Courses']['lessons'][Yii::$app->request->post('row')];
-                        $course->lessons = $lessons;
-                        // Begin Call AdobeConnect For Remove Course
-                        $adminRole = Admin::find()->where(['role' => 'user'])->one();
-                        $response = null;
-                        if($adminRole != null && ($course->content_type == '1' || $course->content_type == '2'))
-                        {
-                            $curl = curl_init();
-                            curl_setopt_array($curl, array(
-                                CURLOPT_URL => Yii::getAlias('@baseUrl').'/adobe-connect/update-lesson',
-                                CURLOPT_RETURNTRANSFER => true,
-                                CURLOPT_ENCODING => '',
-                                CURLOPT_MAXREDIRS => 10,
-                                CURLOPT_TIMEOUT => 0,
-                                CURLOPT_FOLLOWLOCATION => true,
-                                CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-                                CURLOPT_CUSTOMREQUEST => 'POST',
-                                CURLOPT_POSTFIELDS =>'{
-                                "course_id": "'.(string) $course->_id.'",
-                                "lesson_id": "'.(string) $lessonId.'",
-                                "from": "'.$from.'",
-                                "to": "'.$to.'"
-                            }',
-                                CURLOPT_HTTPHEADER => array(
-                                    '_id: '.(string) $adminRole->_id,
-                                    'Content-Type: application/json'
-                                ),
-                            ));
-                            $response = curl_exec($curl);
-                            $response = json_decode($response);
-                            curl_close($curl);
+        $model = $this->postedPackage('Courses');
+        if ($model === null)
+            return $this->formResult('error', 'دوره یافت نشد یا امکان ویرایش آن را ندارید', ['index']);
+        $back = ['edit-package', '_id' => (string) $model->_id, 'tab' => 'tab-id1'];
+        $row = Yii::$app->request->post('row');
+        $lessons = is_array($model->lessons) ? array_values($model->lessons) : [];
+        if (!is_scalar($row) || !ctype_digit((string) $row) || !isset($lessons[(int) $row]))
+            return $this->formResult('error', 'درس انتخاب‌شده یافت نشد', $back);
+        $row = (int) $row;
+        $current = $lessons[$row];
+        $lessonId = (string) $current['_id'];
+        $platform = \app\components\classroom\ClassroomPlatforms::hasOnlineClass($model) ? \app\components\classroom\ClassroomPlatforms::forCourse($model) : null;
 
-                            $response1 = null;
-                            $teacherDetail = Teachers::findOne($lessons[Yii::$app->request->post('row')]['teachers']);
-                            if($teacherDetail != null)
-                            {
-                                $teacherAdmin = Admin::find()->where(['username' => $teacherDetail->mobile])->one();
-                                if($teacherAdmin != null)
-                                {
-                                    $curl = curl_init();
-//
-                                    curl_setopt_array($curl, array(
-                                        CURLOPT_URL => Yii::getAlias('@baseUrl').'/adobe-connect/replace-teacher',
-                                        CURLOPT_RETURNTRANSFER => true,
-                                        CURLOPT_ENCODING => '',
-                                        CURLOPT_MAXREDIRS => 10,
-                                        CURLOPT_TIMEOUT => 0,
-                                        CURLOPT_FOLLOWLOCATION => true,
-                                        CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-                                        CURLOPT_CUSTOMREQUEST => 'POST',
-                                        CURLOPT_POSTFIELDS =>'{
-                                            "course_id": "'.(string) $course->_id.'",
-                                            "lesson_id": "'.(string) $lessonId.'",
-                                            "teacher_id": "'.(string) $teacherAdmin->_id.'"
-                                        }',
-                                        CURLOPT_HTTPHEADER => array(
-                                            '_id: '.(string) $adminRole->_id,
-                                            'Content-Type: application/json'
-                                        ),
-                                    ));
-                                    $response1 = curl_exec($curl);
-                                    $response1 = json_decode($response1);
-                                    curl_close($curl);
-                                }
-                            }
-                        }
-                        // End Call AdobeConnect For Remove Course
-                       if($course->content_type == '1' || $course->content_type == '2')
-                       {
-                           if(property_exists($response,'status') && property_exists($response1,'status'))
-                           {
-                               if($response->status == 'ok' && $response1->status == 'ok')
-                               {
-                                   if ($course->save())
-                                       Yii::$app->session->setFlash('status', '3');
-                                   else
-                                       Yii::$app->session->setFlash('status', '2');
-                               }
-                               else
-                                   Yii::$app->session->setFlash('status','21');
-                           }
-                           else
-                           {
-                               $course = Courses::findOne(Yii::$app->request->post()['Courses']['_id']);
-                               if($course != null)
-                               {
-                                   $lessons = $course->lessons;
-                                   if(array_key_exists('duration',Yii::$app->request->post()['Courses']['lessons'][Yii::$app->request->post('row')]['date']))
-                                   {
-                                       $lessons[Yii::$app->request->post('row')]['date']['duration'] = Yii::$app->request->post()['Courses']['lessons'][Yii::$app->request->post('row')]['date']['duration'];
-                                       $course->lessons = $lessons;
-                                       $course->save();
-                                   }
-                               }
-                               Yii::$app->session->setFlash('status','21');
-                           }
-                       }
-                       else
-                       {
-                           if ($course->save())
-                               Yii::$app->session->setFlash('status', '3');
-                           else
-                               Yii::$app->session->setFlash('status', '2');
-                       }
-                    }
-                    else
-                        Yii::$app->session->setFlash('status','22');
-                }
-                else if ((isset($_POST['delete'])) && (($course->status == '2') || ($course->status == '3') || ($course->status == '4') || ($course->status == '7') || ($course->status == '8') || ($course->status == '9') || (Yii::$app->user->identity->role == 'user' || Yii::$app->user->identity->role == 'cnt')))
-                {
-                    $index = null;
-                    if ($course->my_lessons != null)
-                    {
-                        $i = 0;
-                        foreach ($course->my_lessons['_id'] as $lesson)
-                        {
-                            if ($lesson == Yii::$app->request->post()['Courses']['lessons'][Yii::$app->request->post('row')]['_id'])
-                                $index = $i;
-                            $i++;
-                        }
-                    }
-                    $newLessons = $course->my_lessons['_id'];
-                    if ($index !== null) {
-                        unset($newLessons[$index]);
-                        $newLessons = array_values($newLessons);
-                    }
-                    $newLessons = array(
-                        '_id' => $newLessons
-                    );
-                    $lessons = $course->lessons;
-                    $lessonId = $lessons[Yii::$app->request->post('row')]['_id'];
-                    unset($lessons[Yii::$app->request->post('row')]);
-                    $lessons = array_values($lessons);
-                    $course->lessons = $lessons;
-                    $course->my_lessons = $newLessons;
-                    // Begin Call AdobeConnect For Remove Course
-                    $adminRole = Admin::find()->where(['role' => 'user'])->one();
-                    $response = null;
-                    if($adminRole != null && ($course->content_type == '1' || $course->content_type == '2'))
-                    {
-                        $curl = curl_init();
-
-                        curl_setopt_array($curl, array(
-                            CURLOPT_URL => Yii::getAlias('@baseUrl').'/adobe-connect/delete-lesson/'.(string) $course->_id.'/'. (string) $lessonId,
-                            CURLOPT_RETURNTRANSFER => true,
-                            CURLOPT_ENCODING => '',
-                            CURLOPT_MAXREDIRS => 10,
-                            CURLOPT_TIMEOUT => 0,
-                            CURLOPT_FOLLOWLOCATION => true,
-                            CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-                            CURLOPT_CUSTOMREQUEST => 'POST',
-                            CURLOPT_HTTPHEADER => array(
-                                '_id: '.(string) $adminRole->_id
-                            ),
-                        ));
-                        $response = curl_exec($curl);
-                        $response = json_decode($response);
-                        curl_close($curl);
-                    }
-                    // End Call AdobeConnect For Remove Course
-                    if($course->content_type == '1' || $course->content_type == '2')
-                    {
-                        if(property_exists($response,'status'))
-                        {
-                            if($response->status == 'ok')
-                            {
-                                if ($course->save())
-                                    Yii::$app->session->setFlash('status', '4');
-                                else
-                                    Yii::$app->session->setFlash('status', '2');
-                            }
-                            else
-                                Yii::$app->session->setFlash('status','21');
-                        }
-                        else
-                            Yii::$app->session->setFlash('status','21');
-                    }
-                    else
-                    {
-                        if ($course->save())
-                            Yii::$app->session->setFlash('status', '4');
-                        else
-                            Yii::$app->session->setFlash('status', '2');
-                    }
-                }
-            }
+        if (Yii::$app->request->post('delete') !== null) {
+            if (count($lessons) <= 1)
+                return $this->formResult('error', 'دوره باید حداقل یک درس داشته باشد', $back);
+            if ($platform !== null && !$platform->deleteLesson((string) $model->_id, $lessonId))
+                return $this->formResult('error', 'حذف کلاس این درس در ' . $platform->title() . ' ناموفق بود؛ درس حذف نشد. دوباره تلاش کنید.', $back);
+            array_splice($lessons, $row, 1);
+            $model->lessons = $lessons;
+            $model->my_lessons = ['_id' => array_map(function ($l) { return (string) $l['_id']; }, $lessons)];
+            if (!$model->save(false, ['lessons', 'my_lessons']))
+                return $this->formResult('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید', $back);
+            return $this->formResult('success', 'درس از دوره حذف شد', $back);
         }
-        return $this->redirect(Yii::$app->request->referrer);
+
+        $input = Yii::$app->request->post('Courses');
+        $posted = isset($input['lessons'][$row]) && is_array($input['lessons'][$row]) ? $input['lessons'][$row] : [];
+        $posted['_id'] = $lessonId; // درس ردیف عوض نمی‌شود (برای درس دیگر: حذف و افزودن)
+        $lesson = \app\models\Lessons::findOne($lessonId);
+        $title = $lesson !== null ? (string) $lesson->title : 'این درس';
+        $teachers = \app\components\PackageForm::unitTeachers((string) $model->college, [isset($posted['teachers']) ? $posted['teachers'] : '']);
+        $new = \app\components\PackageForm::lessonRow($model, $posted, $row, $title, $teachers);
+        if ($new === false)
+            return $this->formResult('error', \app\components\PackageForm::$error, $back, \app\components\PackageForm::$errorField);
+        if (isset($current['meeting']))
+            $new['meeting'] = $current['meeting'];
+
+        if ($platform !== null) {
+            $teacherAdminId = null;
+            if ((string) $current['teachers'] !== $new['teachers']) {
+                $teacher = Teachers::findOne($new['teachers']);
+                $admin = $teacher === null ? null : Admin::find()->where(['username' => (string) $teacher->mobile])->one();
+                $teacherAdminId = $admin === null ? null : (string) $admin->_id;
+            }
+            $dates = $current['date'] ?? [];
+            $changed = $teacherAdminId !== null || ($dates['from'] ?? '') !== $new['date']['from'] || ($dates['to'] ?? '') !== $new['date']['to'];
+            if ($changed && !$platform->updateLesson((string) $model->_id, $lessonId, $new['date']['from'], $new['date']['to'], $teacherAdminId))
+                return $this->formResult('error', 'به‌روزرسانی کلاس این درس در ' . $platform->title() . ' ناموفق بود؛ تغییرات ذخیره نشد. دوباره تلاش کنید.', $back);
+        }
+        $lessons[$row] = $new;
+        $model->lessons = $lessons;
+        if (!$model->save(false, ['lessons']))
+            return $this->formResult('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید', $back);
+        return $this->formResult('success', 'درس «' . $title . '» ویرایش شد', $back);
     }
 
+    /**
+     * افزودن درس به دوره‌ی میان‌مدت: درس از دروس همان واحد و تکراری نباشد؛ همان قواعد تاریخ و مدرس.
+     */
     public function actionAdd_lesson_to_package()
     {
-        if (Yii::$app->request->isPost)
-        {
-            $course = Courses::findOne(['_id' => Yii::$app->request->post('_id')]);
-            if ($course != null)
-            {
-                if ($course->status == '2' || $course->status == '3' || $course->status == '4' || $course->status == '7' || $course->status == '8' || $course->status == '9' || Yii::$app->user->identity->role == 'user' || Yii::$app->user->identity->role == 'cnt')
-                {
-                    $preLessons = array();
-                    if($course->lessons != null)
-                        $preLessons = $course->lessons;
-                    array_push($preLessons, Yii::$app->request->post()['Courses']['lessons']);
-                    $course->lessons = $preLessons;
-                    $myLessons = array();
-                    if($course->my_lessons != null)
-                        $course->my_lessons['_id'];
-                    array_push($myLessons, Yii::$app->request->post()['Courses']['lessons']['_id']);
-                    $newLessons = array(
-                        '_id' => $myLessons
-                    );
-                    $course->my_lessons = $newLessons;
-                    if ($course->save())
-                    {
-                        // Call AdobeConnect For Create Meetings Course
-                        $adminRole = Admin::find()->where(['role' => 'user'])->one();
-                        if($adminRole != null && ($course->content_type == '1' || $course->content_type == '2'))
-                        {
-                            $curl = curl_init();
-
-                            curl_setopt_array($curl, array(
-                                CURLOPT_URL => Yii::getAlias('@baseUrl').'/adobe-connect/create-meeting/'.(string) $course->_id.'?new-lesson='.Yii::$app->request->post()['Courses']['lessons']['_id'],
-                                CURLOPT_RETURNTRANSFER => true,
-                                CURLOPT_ENCODING => '',
-                                CURLOPT_MAXREDIRS => 10,
-                                CURLOPT_TIMEOUT => 0,
-                                CURLOPT_FOLLOWLOCATION => true,
-                                CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-                                CURLOPT_CUSTOMREQUEST => 'POST',
-                                CURLOPT_HTTPHEADER => array(
-                                    '_id: '.(string) $adminRole->_id
-                                ),
-                            ));
-                            $response = curl_exec($curl);
-                            curl_close($curl);
-                        }
-                        // Call AdobeConnect For Create Meetings Course
-                        Yii::$app->session->setFlash('status', '5');
-                    }
-                    else
-                        Yii::$app->session->setFlash('status', '2');
-                }
-            }
+        $model = $this->postedPackage(null);
+        if ($model === null)
+            return $this->formResult('error', 'دوره یافت نشد یا امکان ویرایش آن را ندارید', ['index']);
+        $back = ['edit-package', '_id' => (string) $model->_id, 'tab' => 'tab-id1'];
+        $input = Yii::$app->request->post('Courses');
+        $posted = isset($input['lessons']) && is_array($input['lessons']) ? $input['lessons'] : [];
+        $lessonId = isset($posted['_id']) && is_string($posted['_id']) && preg_match('/^[a-f0-9]{24}$/i', $posted['_id']) ? $posted['_id'] : '';
+        $lesson = $lessonId === '' ? null : \app\models\Lessons::find()->where(['_id' => $lessonId, 'college' => (string) $model->college])->one();
+        if ($lesson === null)
+            return $this->formResult('error', 'درس را از دروس همین واحد انتخاب کنید', $back, 'Courses[lessons][_id]');
+        $lessons = is_array($model->lessons) ? array_values($model->lessons) : [];
+        foreach ($lessons as $item)
+            if ((string) $item['_id'] === $lessonId)
+                return $this->formResult('error', 'این درس قبلاً به دوره اضافه شده است', $back, 'Courses[lessons][_id]');
+        if (count($lessons) >= \app\components\PackageForm::MAX_LESSONS)
+            return $this->formResult('error', 'تعداد دروس بیش از حد مجاز است', $back);
+        $teachers = \app\components\PackageForm::unitTeachers((string) $model->college, [isset($posted['teachers']) ? $posted['teachers'] : '']);
+        // نام فیلدهای خطا در مودال افزودن: Courses[lessons][...]
+        $new = \app\components\PackageForm::lessonRow($model, $posted, 'new', (string) $lesson->title, $teachers);
+        if ($new === false)
+            return $this->formResult('error', \app\components\PackageForm::$error, $back, str_replace('[lessons][new]', '[lessons]', (string) \app\components\PackageForm::$errorField));
+        $lessons[] = $new;
+        $model->lessons = $lessons;
+        $model->my_lessons = ['_id' => array_map(function ($l) { return (string) $l['_id']; }, $lessons)];
+        if (!$model->save(false, ['lessons', 'my_lessons']))
+            return $this->formResult('error', 'خطا در ذخیره‌سازی، لطفاً دوباره تلاش کنید', $back);
+        $message = 'درس «' . $lesson->title . '» به دوره اضافه شد';
+        if (\app\components\classroom\ClassroomPlatforms::hasOnlineClass($model)
+            && in_array((string) $model->status, [\app\components\CourseStatus::ACTIVE, \app\components\CourseStatus::APPROVED_INACTIVE], true)) {
+            $result = \app\components\classroom\ClassroomPlatforms::forCourse($model)->createCourseMeetings((string) $model->_id, $lessonId);
+            if ($result !== true)
+                return $this->formResult('warning', $message . '؛ اما ساخت کلاس آنلاین این درس ناموفق بود', $back);
         }
-        return $this->redirect(Yii::$app->request->referrer);
+        return $this->formResult('success', $message, $back);
+    }
+
+    /**
+     * دوره‌ی میان‌مدتی که شناسه‌اش در POST آمده، اگر کاربر جاری اجازه‌ی ویرایشش را دارد.
+     *
+     * @param string|null $wrapper 'Courses' برای Courses[_id]؛ null برای _id
+     * @return Courses|null
+     */
+    private function postedPackage($wrapper)
+    {
+        if (!Yii::$app->request->isPost)
+            return null;
+        $data = $wrapper === null ? Yii::$app->request->post() : Yii::$app->request->post($wrapper);
+        $id = is_array($data) && isset($data['_id']) && is_string($data['_id']) && preg_match('/^[a-f0-9]{24}$/i', $data['_id']) ? $data['_id'] : null;
+        $model = $id === null ? null : Courses::find()->where(['_id' => $id, 'type' => '2'])->one();
+        return $model !== null && \app\components\CourseAccess::canEdit($model) ? $model : null;
     }
 
     public function actionNew_user()

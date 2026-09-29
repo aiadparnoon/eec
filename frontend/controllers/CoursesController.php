@@ -225,8 +225,22 @@ class CoursesController extends Controller
         $model->scenario = Courses::SCENARIO_EDIT_COURSE;
         if (!ShortCourseForm::apply($model, $input, false))
             return $this->back('error', ShortCourseForm::$error, null, ShortCourseForm::$errorField);
-        if (!$model->validate())
+        // فایل قرارداد (ظرفیت سازمانی): مثل فرم ثبت؛ فایل قبلی فقط با فایل جدید جایگزین می‌شود
+        $contract = UploadedFile::getInstance($model, 'contract_file');
+        $oldContract = (string) $model->getOldAttribute('contract_file');
+        if ($contract !== null) {
+            $name = SecureUpload::save($contract, 'document', self::CONTRACT_DIR);
+            if ($name === null)
+                return $this->back('error', 'فایل قرارداد: ' . SecureUpload::$lastError, null, 'Courses[contract_file]');
+            $model->contract_file = $name;
+        }
+        if (!$model->validate()) {
+            if ($contract !== null)
+                SecureUpload::delete(self::CONTRACT_DIR, $model->contract_file);
             return $this->back('error', $this->firstError($model), null, $this->errorField($model));
+        }
+        if ($contract !== null && $oldContract !== '')
+            SecureUpload::delete(self::CONTRACT_DIR, $oldContract);
 
         // ویرایش دوره‌ی «نیاز به اصلاح» = ارسال مجدد با برچسب «اصلاح‌شده، در انتظار بررسی» (بند ۵.۳)
         if (in_array((string) $model->status, [CourseStatus::NEEDS_CORRECTION, CourseStatus::UNIT_CORRECTION], true))
@@ -264,6 +278,7 @@ class CoursesController extends Controller
             'memberStats' => CourseMembersSearch::stats((string) $courseDetail->_id),
             'colleges' => $this->selectableUnits(),
             'servers' => ClassroomServers::activeOptions(),
+            'capacityTypes' => CourseOptions::capacityTypes(),
             'courseDetail' => $courseDetail,
             'searchModel' => $searchModel,
             'dataProvider' => $dataProvider,

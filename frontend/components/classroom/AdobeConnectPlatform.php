@@ -62,6 +62,29 @@ class AdobeConnectPlatform implements ClassroomPlatform
         return $response !== null;
     }
 
+    public function updateLesson($courseId, $lessonId, $from, $to, $teacherAdminId = null)
+    {
+        $ok = function ($raw) {
+            $decoded = $raw === null ? null : json_decode($raw);
+            return is_object($decoded) && isset($decoded->status) && $decoded->status == 'ok';
+        };
+        $result = $ok($this->call('/adobe-connect/update-lesson', [
+            'course_id' => (string) $courseId, 'lesson_id' => (string) $lessonId, 'from' => (string) $from, 'to' => (string) $to,
+        ]));
+        if ($result && $teacherAdminId !== null)
+            $result = $ok($this->call('/adobe-connect/replace-teacher', [
+                'course_id' => (string) $courseId, 'lesson_id' => (string) $lessonId, 'teacher_id' => (string) $teacherAdminId,
+            ]));
+        return $result;
+    }
+
+    public function deleteLesson($courseId, $lessonId)
+    {
+        $raw = $this->call('/adobe-connect/delete-lesson/' . rawurlencode((string) $courseId) . '/' . rawurlencode((string) $lessonId));
+        $decoded = $raw === null ? null : json_decode($raw);
+        return is_object($decoded) && isset($decoded->status) && $decoded->status == 'ok';
+    }
+
     public function updateUser($user)
     {
         $response = $this->call('/adobe-connect/update-user-info', [

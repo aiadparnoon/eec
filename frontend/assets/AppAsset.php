@@ -74,6 +74,7 @@ class AppAsset extends AssetBundle
     //    ];
     public $depends = [
         'yii\web\YiiAsset',
-
+        // تبدیل ارقام فارسی فیلدهای عددی و کنترل نوع ورودی در همه‌ی صفحه‌ها
+        'frontend\assets\InputGuardAsset',
     ];
 }

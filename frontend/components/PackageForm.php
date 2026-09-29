@@ -106,46 +106,73 @@ class PackageForm extends ShortCourseForm
             return self::fail('همه‌ی دروس باید از دروس همین واحد باشند', 'lessons-select');
         $teacherIds = [];
         foreach ($rows as $row)
-            if (isset($row['teachers']) && is_string($row['teachers']) && preg_match('/^[a-f0-9]{24}$/i', $row['teachers']))
-                $teacherIds[] = $row['teachers'];
-        $validTeachers = [];
-        if (!empty($teacherIds))
-            foreach (Teachers::find()->select(['_id'])->where(['_id' => array_values(array_unique($teacherIds)), 'colleges' => $unit])->all() as $teacher)
-                $validTeachers[(string) $teacher->_id] = true;
+            $teacherIds[] = isset($row['teachers']) ? $row['teachers'] : '';
+        $validTeachers = self::unitTeachers($unit, $teacherIds);
 
-        $from = (string) $model->date['from'];
-        $to = (string) $model->date['to'];
         $lessons = [];
         foreach ($rows as $i => $row) {
-            $id = $row['_id'];
-            $name = '«' . $titles[$id] . '»';
-            $teacher = isset($row['teachers']) && is_string($row['teachers']) ? $row['teachers'] : '';
-            if (!isset($validTeachers[$teacher]))
-                return self::fail('مدرس درس ' . $name . ' را از مدرسان همین واحد انتخاب کنید', 'Courses[lessons][' . $i . '][teachers]');
-            $date = isset($row['date']) && is_array($row['date']) ? $row['date'] : [];
-            $lessonFrom = self::jalaliDate(isset($date['from']) ? $date['from'] : '');
-            $lessonTo = self::jalaliDate(isset($date['to']) ? $date['to'] : '');
-            if ($lessonFrom === null || $lessonTo === null)
-                return self::fail('تاریخ شروع و اتمام درس ' . $name . ' را درست وارد کنید', 'Courses[lessons][' . $i . '][date][' . ($lessonFrom === null ? 'from' : 'to') . ']');
-            if (strcmp($lessonTo, $lessonFrom) < 0)
-                return self::fail('تاریخ اتمام درس ' . $name . ' نباید قبل از تاریخ شروع آن باشد', 'Courses[lessons][' . $i . '][date][to]');
-            if (strcmp($lessonFrom, $from) < 0 || strcmp($lessonTo, $to) > 0)
-                return self::fail('تاریخ‌های درس ' . $name . ' باید داخل بازه‌ی برگزاری دوره باشد', 'Courses[lessons][' . $i . '][date][' . (strcmp($lessonFrom, $from) < 0 ? 'from' : 'to') . ']');
-            $time = isset($date['time']) && is_scalar($date['time']) ? UsersSearch::normalizeDigits(trim((string) $date['time'])) : '';
-            if (!preg_match('/^([01]?\d|2[0-3]):[0-5]\d$/', $time))
-                return self::fail('ساعت شروع درس ' . $name . ' را به شکل ۱۸:۳۰ وارد کنید', 'Courses[lessons][' . $i . '][date][time]');
-            $hours = isset($date['duration']) && is_scalar($date['duration']) ? UsersSearch::normalizeDigits(trim((string) $date['duration'])) : '';
-            if (!ctype_digit($hours) || (int) $hours < 1 || (int) $hours > 500)
-                return self::fail('مدت زمان درس ' . $name . ' را به ساعت وارد کنید', 'Courses[lessons][' . $i . '][date][duration]');
-            $lessons[] = [
-                '_id' => $id,
-                'teachers' => $teacher,
-                'hide_archive' => isset($row['hide_archive']) && ($row['hide_archive'] === '1' || $row['hide_archive'] === 'true'),
-                'date' => ['from' => $lessonFrom, 'to' => $lessonTo, 'time' => $time, 'duration' => $hours],
-            ];
+            $lesson = self::lessonRow($model, $row, $i, $titles[$row['_id']], $validTeachers);
+            if ($lesson === false)
+                return false;
+            $lessons[] = $lesson;
         }
         $model->lessons = $lessons;
         return true;
+    }
+
+    /**
+     * اعتبارسنجی یک درس دوره (ثبت دوره، افزودن درس، ویرایش درس): مدرس از مدرسان واحد، تاریخ‌ها داخل بازه‌ی
+     * دوره و اتمام حداقل یک روز بعد از شروع، ساعت و مدت.
+     *
+     * @param array $row ورودی فرم برای این درس
+     * @param int|string $i شماره‌ی ردیف برای نام فیلد خطا
+     * @param string $title عنوان درس برای پیام
+     * @param array $validTeachers [teacherId => true]
+     * @return array|false
+     */
+    public static function lessonRow(Courses $model, array $row, $i, $title, array $validTeachers)
+    {
+        $name = '«' . $title . '»';
+        $from = is_array($model->date) && isset($model->date['from']) ? (string) $model->date['from'] : '';
+        $to = is_array($model->date) && isset($model->date['to']) ? (string) $model->date['to'] : '';
+        $teacher = isset($row['teachers']) && is_string($row['teachers']) ? $row['teachers'] : '';
+        if (!isset($validTeachers[$teacher]))
+            return self::fail('مدرس درس ' . $name . ' را از مدرسان همین واحد انتخاب کنید', 'Courses[lessons][' . $i . '][teachers]');
+        $date = isset($row['date']) && is_array($row['date']) ? $row['date'] : [];
+        $lessonFrom = self::jalaliDate(isset($date['from']) ? $date['from'] : '');
+        $lessonTo = self::jalaliDate(isset($date['to']) ? $date['to'] : '');
+        if ($lessonFrom === null || $lessonTo === null)
+            return self::fail('تاریخ شروع و اتمام درس ' . $name . ' را درست وارد کنید', 'Courses[lessons][' . $i . '][date][' . ($lessonFrom === null ? 'from' : 'to') . ']');
+        if (strcmp($lessonTo, $lessonFrom) <= 0)
+            return self::fail('تاریخ اتمام درس ' . $name . ' باید حداقل یک روز بعد از تاریخ شروع آن باشد', 'Courses[lessons][' . $i . '][date][to]');
+        if (($from !== '' && strcmp($lessonFrom, $from) < 0) || ($to !== '' && strcmp($lessonTo, $to) > 0))
+            return self::fail('تاریخ‌های درس ' . $name . ' باید داخل بازه‌ی برگزاری دوره باشد', 'Courses[lessons][' . $i . '][date][' . ($from !== '' && strcmp($lessonFrom, $from) < 0 ? 'from' : 'to') . ']');
+        $time = isset($date['time']) && is_scalar($date['time']) ? UsersSearch::normalizeDigits(trim((string) $date['time'])) : '';
+        if (!preg_match('/^([01]?\d|2[0-3]):[0-5]\d$/', $time))
+            return self::fail('ساعت شروع درس ' . $name . ' را به شکل ۱۸:۳۰ وارد کنید', 'Courses[lessons][' . $i . '][date][time]');
+        $hours = isset($date['duration']) && is_scalar($date['duration']) ? UsersSearch::normalizeDigits(trim((string) $date['duration'])) : '';
+        if (!ctype_digit($hours) || (int) $hours < 1 || (int) $hours > 500)
+            return self::fail('مدت زمان درس ' . $name . ' را به ساعت وارد کنید', 'Courses[lessons][' . $i . '][date][duration]');
+        $archive = isset($row['hide_archive']) ? $row['hide_archive'] : false;
+        return [
+            '_id' => (string) $row['_id'],
+            'teachers' => $teacher,
+            'hide_archive' => $archive === true || $archive === '1' || $archive === 'true',
+            'date' => ['from' => $lessonFrom, 'to' => $lessonTo, 'time' => $time, 'duration' => $hours],
+        ];
+    }
+
+    /** مدرسان معتبر یک واحد از میان شناسه‌های داده‌شده [id => true] */
+    public static function unitTeachers($unit, array $ids)
+    {
+        $ids = array_values(array_unique(array_filter($ids, function ($id) {
+            return is_string($id) && preg_match('/^[a-f0-9]{24}$/i', $id);
+        })));
+        $valid = [];
+        if (!empty($ids))
+            foreach (Teachers::find()->select(['_id'])->where(['_id' => $ids, 'colleges' => (string) $unit])->all() as $teacher)
+                $valid[(string) $teacher->_id] = true;
+        return $valid;
     }
 
     // ------------------------------------------------------------------ شرایط اقساطی
